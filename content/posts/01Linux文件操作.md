@@ -62,7 +62,7 @@ nbytes: 要传输的字节数。
 #include <unistd.h>
 ssize_t read(int fd, void * buf, size_t nbytes); //成功返回接受的字节数(但是遇到文件结尾则会返回0)，失败返回-1。
 /*
-fd: 显示数据接收对象的文件描述符
+fd: 显示数据接收对象的文件描述符fd
 buf: 要保存接收数据的缓存地址值
 nbytes: 要接收数据的最大字节数
 */
