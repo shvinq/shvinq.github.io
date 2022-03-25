@@ -13,7 +13,7 @@ jobs:
 
     steps:
     - name: 'Building...'
-      uses: reuixiy/hugo-deploy@v1
+      uses: uses: reuixiy/{repo}@master
       env:
         DEPLOY_REPO: shvinq/shvinq.github.io
         DEPLOY_BRANCH: build
