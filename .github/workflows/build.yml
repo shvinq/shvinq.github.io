@@ -9,14 +9,14 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
 
     steps:
     - name: 'Building...'
       uses: reuixiy/hugo-deploy@v1
       env:
-        DEPLOY_REPO: Shvinq/shvinq.github.io
+        DEPLOY_REPO: shvinq/shvinq.github.io
         DEPLOY_BRANCH: build
         DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
         # https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
-        TZ: Asia/Hangzhou
+        TZ: Asia/Shanghai
