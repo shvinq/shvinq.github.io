@@ -1,8 +1,8 @@
 ##########################################
 # 站点配置
 
-baseURL = "https://example.com/"
-title = "Hugo 主题 MemE"
+baseURL = "https://shvinq.com/"
+title = "SHVINQ"
 languageCode = "zh-CN"
 hasCJKLanguage = true
 # 版权信息（支持 Markdown）
@@ -96,17 +96,17 @@ uglyURLs = false
 # 作者信息
 [author]
     # 名字
-    name = "reuixiy"
+    name = "shvinq"
     # 邮箱
-    email = "reuixiy@gmail.com"
+    email = "zhoushuiqing321@outlook.com"
     # 座右铭或简介
-    motto = "Viva La Vida"
+    motto = "Go Deep"
     # 头像
     avatar = "/icons/apple-touch-icon.png"
     # 网站（默认值：baseURL）
-    website = "https://io-oi.me/"
+    website = "https://shvinq.com/"
     # 推特
-    twitter = "reuixiy"
+    #twitter = "reuixiy"
 
 # 相关文章
 [related]
@@ -338,7 +338,7 @@ uglyURLs = false
     # 说明：用于 JSON-LD、Open Graph
 
     # 站点的描述
-    siteDescription = "MemE 是一个强大且可高度定制的 GoHugo 博客主题，专为个人博客设计。"
+    siteDescription = ""
     # 说明：用于 HTML 的头部元数据、JSON-LD、
     #      Open Graph、Atom、RSS
 
@@ -347,7 +347,7 @@ uglyURLs = false
     # 注意：请保持此格式，更改数字
 
     # 站点的推特帐号
-    siteTwitter = "reuixiy"
+    #siteTwitter = "reuixiy"
     # 说明：用于 Twitter Cards
 
 
@@ -431,7 +431,7 @@ uglyURLs = false
     groupByMonth = true
 
     # 是否开启十二生肖
-    chineseZodiac = true
+    chineseZodiac = false
 
     # 是否翻译年份（仅对年份标题有效）
     i18nYear = true
@@ -716,7 +716,7 @@ uglyURLs = false
     #      单位：em
 
     # 文章是否为原创（全局设置）
-    original = true
+    original = false
     # 说明：会影响文章的作者信息和版权信息
     #      文章的 Front Matter 中的 `original`
     #      的优先级高于此处
@@ -752,12 +752,12 @@ uglyURLs = false
     publishedDateIcon = "calendar-alt"
 
     # 是否显示修改时间
-    displayModifiedDate = true
+    displayModifiedDate = false
     # 修改时间的图标
     modifiedDateIcon = "calendar-check"
 
     # 是否显示过期时间
-    displayExpiredDate = true
+    displayExpiredDate = false
     # 过期时间的图标
     expiredDateIcon = "calendar-times"
 
@@ -769,12 +769,12 @@ uglyURLs = false
     categoryDelimiter = "/"
 
     # 是否显示字数统计
-    displayWordCount = true
+    displayWordCount = false
     # 字数统计的图标
     wordCountIcon = "pencil-alt"
 
     # 是否显示阅读时长
-    displayReadingTime = true
+    displayReadingTime = false
     # 阅读时长的图标
     readingTimeIcon = "clock"
 
@@ -1138,7 +1138,7 @@ uglyURLs = false
     # 相关文章
 
     # 是否开启
-    enableRelatedPosts = true
+    enableRelatedPosts = false
 
     # 是否显示（全局设置）
     displayRelatedPosts = true
@@ -1216,10 +1216,10 @@ uglyURLs = false
     # 页脚
 
     # 是否开启
-    enableFooter = true
+    enableFooter = false
 
     # 是否显示
-    displayFooter = true
+    displayFooter = false
 
     # 是否在首页显示
     displayFooterInHome = true
@@ -1257,7 +1257,7 @@ uglyURLs = false
     #      https://busuanzi.ibruce.info/
 
     # 社交链接
-    enableSocials = true
+    enableSocials = false
     # 说明：见 data/Socials.toml
 
 
