@@ -1,0 +1,1137 @@
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" xml:lang="zh-CN"><title type="text">SHVINQ</title><subtitle type="html">我来，我见，我留下</subtitle><updated>2022-03-27T21:57:51+08:00</updated><id>https://shvinq.com/</id><link rel="alternate" type="text/html" href="https://shvinq.com/"/><link rel="self" type="application/atom+xml" href="https://shvinq.com/atom.xml"/><author><name>shvinq</name><uri>https://shvinq.com/</uri><email>zhoushuiqing321@gmail.com</email></author><rights>在保留本文作者及本文链接的前提下，非商业用途随意转载分享。</rights><generator uri="https://gohugo.io/" version="0.95.0">Hugo</generator><entry><title type="text">内存映射-Mmap</title><link rel="alternate" type="text/html" href="https://shvinq.com/tech/mmap/"/><id>https://shvinq.com/tech/mmap/</id><updated>2022-03-27T21:52:56+08:00</updated><published>2021-12-18T17:22:47+08:00</published><author><name>shvinq</name><uri>https://shvinq.com/</uri><email>zhoushuiqing321@gmail.com</email></author><rights>在保留本文作者及本文链接的前提下，非商业用途随意转载分享。</rights><summary type="html">通常使用mmap()的三种情况： 提高I/O效率、匿名内存映射、共享内存进程通信 。 共享内存包含了创建共……</summary><content type="html">&lt;p>通常使用mmap()的三种情况： &lt;strong>提高I/O效率、匿名内存映射、共享内存进程通信&lt;/strong> 。&lt;/p>
+&lt;p>&lt;strong>共享内存&lt;/strong>包含了创建共享内存区域的函数，以及两个进程怎么挂载共享内存通信，分离、释放共享内存。&lt;/p>
+&lt;blockquote>
+&lt;p>共享内存的好处就是效率高，不需要太多次的进行数据的copy。可以直接进行读写内存。所以，相对来说在IPC进程间通信三大主题（消息队列，信号量，共享内存）里面，共享内存要比消息队列使用多，而且消息队列只在有血缘关系的进程间通信；但是，共享内存不保证同步，可以使用信号量来保证共享内存同步。&lt;/p>
+&lt;/blockquote>
+&lt;p>&lt;strong>Linux中的两种共享内存&lt;/strong>。一种是我们的IPC通信System V版本的共享内存，另外的一种就是存储映射I/O（mmap函数），当然还有一种POSIX的共享内存，它是在mmap基础之上构建的。&lt;/p>
+&lt;h2 id="一mmap">一、Mmap&lt;/h2>
+&lt;p>mmap I/O的描述符间接说明内存映射是对文件操作。另外，mmap另外可以在无亲缘的进程之间提供共享内存区。这样，类似的两个进程之间就是可以进行了通信。&lt;/p>
+&lt;p>Linux提供了内存映射函数mmap, 它把文件内容映射到一段内存上(准确说是&lt;strong>虚拟内存&lt;/strong>上，运行着进程), &lt;strong>通过对这段内存的读取和修改, 实现对文件的读取和修改&lt;/strong>。&lt;/p>
+&lt;p>mmap()系统调用使得进程之间可以通过映射一个普通的文件实现共享内存。&lt;strong>普通文件映射到进程地址空间后，进程可以像访问内存的方式对文件进行访问，不需要其他内核态的系统调用(read,write)去操作。&lt;/strong>&lt;/p>
+&lt;blockquote>
+&lt;p>这里是说设备或者硬盘存储的一块空间映射到物理内存，然后操作这块物理内存就是在操作实际的硬盘空间，不需要经过内核态传递。&lt;/p>
+&lt;p>比如你的硬盘上有一个文件，你可以使用linux系统提供的mmap接口，将这个文件映射到进程一块虚拟地址空间，这块空间会对应一块物理内存，当你读写这块物理空间的时候，就是在读取实际的磁盘文件，就是这么直接高效。&lt;strong>通常诸如共享库的加载都是通过内存映射的方式加载到物理内存的&lt;/strong>。&lt;/p>
+&lt;/blockquote>
+&lt;p>&lt;strong>所以总的来说mmap系统调用并不完全是为了共享内存来设计的，它本身提供了不同于一般对普通文件的访问的方式，进程可以像读写内存一样对普通文件进行操作（无需系统调用），IPC的共享内存是纯粹为了共享。&lt;/strong>&lt;/p>
+&lt;h3 id="1-mmap系统调用介绍">1. mmap系统调用介绍&lt;/h3>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="kt">void&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="nf">mmap&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">void&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">addr&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">size_t&lt;/span> &lt;span class="n">length&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">prot&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">flags&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">off_t&lt;/span> &lt;span class="n">offset&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>这就是mmap系统调用的接口，mmap函数成功返回指向内存区域的指针，失败返回MAP_FAILED。&lt;/p>
+&lt;ul>
+&lt;li>
+&lt;p>addr某个特定的地址作为起始地址，当被设置为NULL，标识系统自动分配地址。实实在在的物理区域。&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>length说的是内存段的长度。&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>prot是用来设定内存段的访问权限。&lt;/p>
+&lt;/li>
+&lt;/ul>
+&lt;table>
+&lt;thead>
+&lt;tr>
+&lt;th>prot参数&lt;/th>
+&lt;th>说明&lt;/th>
+&lt;/tr>
+&lt;/thead>
+&lt;tbody>
+&lt;tr>
+&lt;td>PROT_READ&lt;/td>
+&lt;td>内存段可读&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>PROT_WRITE&lt;/td>
+&lt;td>内存段可写&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>PROT_EXEC&lt;/td>
+&lt;td>内存段可执行&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>PROT_NONE&lt;/td>
+&lt;td>内存段不能被访问&lt;/td>
+&lt;/tr>
+&lt;/tbody>
+&lt;/table>
+&lt;ul>
+&lt;li>fd参数是用来被映射文件对应的文件描述符。通过open系统调用得到。&lt;/li>
+&lt;/ul>
+&lt;table>
+&lt;thead>
+&lt;tr>
+&lt;th>flags参数&lt;/th>
+&lt;th>说明&lt;/th>
+&lt;/tr>
+&lt;/thead>
+&lt;tbody>
+&lt;tr>
+&lt;td>MAP_SHARED&lt;/td>
+&lt;td>进程间共享内存，对该内存段修改反映到映射文件中。提供了POSIX共享内存&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>MAP_PRIVATE&lt;/td>
+&lt;td>内存段为调用进程所私有。对该内存段的修改不会反映到映射文件&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>MAP_ANNOYMOUS&lt;/td>
+&lt;td>这段内存不是从文件映射而来的。内容被初始化为全0&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>MAP_FIXED&lt;/td>
+&lt;td>内存段必须位于start参数指定的地址处，start必须是页大小的整数倍（4K整数倍）&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>MAP_HUGETLB&lt;/td>
+&lt;td>按照大内存页面来分配内存空间&lt;/td>
+&lt;/tr>
+&lt;/tbody>
+&lt;/table>
+&lt;ul>
+&lt;li>offset设定从何处进行映射。&lt;/li>
+&lt;/ul>
+&lt;h3 id="2-mmap用于共享内存的方式">2. mmap用于共享内存的方式&lt;/h3>
+&lt;ol>
+&lt;li>我们可以使用普通文件进行提供内存映射，例如，open系统调用打开一个文件，然后进行mmap操作，得到共享内存，这种方式适用于任何进程之间。&lt;/li>
+&lt;li>以使用特殊文件进行匿名内存映射，这个相对的是具有血缘关系的进程之间，当父进程调用mmap，然后进行fork，这样父进程创建的子进程会继承父进程匿名映射后的地址空间，这样，父子进程之间就可以进行通信了。相当于是mmap的返回地址此时是父子进程同时来维护。&lt;/li>
+&lt;li>另外POSIX版本的共享内存底层也是使用了mmap。所以，共享内存在在posix上一定程度上就是指的内存映射了。&lt;/li>
+&lt;/ol>
+&lt;h3 id="3-mmap和system-v共享内存的比较">3. mmap和System V共享内存的比较&lt;/h3>
+&lt;p>System V版本的共享内存（统称为shm）&lt;/p>
+&lt;p>&lt;img src="https://tuchuang-1258133230.cos.ap-shanghai.myqcloud.com/20200917180539.png" alt="">&lt;/p>
+&lt;p>mmap版本的共享内存&lt;/p>
+&lt;p>&lt;img src="https://tuchuang-1258133230.cos.ap-shanghai.myqcloud.com/20200917180729.png" alt="">&lt;/p>
+&lt;h2 id="二总结">二、总结&lt;/h2>
+&lt;ol>
+&lt;li>mmap是在磁盘上&lt;strong>建立一个文件&lt;/strong>，每个进程地址空间中开辟出一块空间进行映射。而shm共享内存，每个进程最终会映射到同一块物理内存。shm保存在物理内存，这样读写的速度肯定要比磁盘要快，但是存储量不是特别大。&lt;/li>
+&lt;li>相对于shm来说，mmap更加简单，调用更加方便，所以这也是大家都喜欢用的原因。&lt;/li>
+&lt;li>另外mmap有一个好处是当机器重启，因为mmap把文件保存在磁盘上，这个文件还保存了操作系统同步的映像，所以mmap不会丢失，但是shmget在内存里面就会丢失。&lt;/li>
+&lt;li>总之，shm是在内存中创建空间，每个进程映射到此处。内存映射是创建一个文件，并且映射到每个进程开辟的空间中。&lt;/li>
+&lt;/ol>
+&lt;blockquote>
+&lt;p>参考文档&lt;/p>
+&lt;p>Linux 进程间通信——内存映射与共享内存: &lt;a href="https://www.colourso.top/linux-mmapshm/">https://www.colourso.top/linux-mmapshm/&lt;/a>)&lt;/p>
+&lt;p>进程间通信——共享内存: &lt;a href="http://blog.csdn.net/qq_26768741/article/details/56014845">http://blog.csdn.net/qq_26768741/article/details/56014845&lt;/a>&lt;/p>
+&lt;/blockquote></content><category scheme="https://shvinq.com/tech/" term="tech" label="tech"/><category scheme="https://shvinq.com/tags/%E7%9F%A5%E8%AF%86/" term="知识" label="知识"/></entry><entry><title type="text">零拷贝技术</title><link rel="alternate" type="text/html" href="https://shvinq.com/tech/zero-copy/"/><id>https://shvinq.com/tech/zero-copy/</id><updated>2022-03-27T21:52:56+08:00</updated><published>2021-12-04T13:05:35+08:00</published><author><name>shvinq</name><uri>https://shvinq.com/</uri><email>zhoushuiqing321@gmail.com</email></author><rights>在保留本文作者及本文链接的前提下，非商业用途随意转载分享。</rights><summary type="html">传统IO 基于传统的IO方式，底层实际上通过调用read()和write()来实现。 通过read()把……</summary><content type="html">&lt;h2 id="传统io">传统IO&lt;/h2>
+&lt;p>基于传统的IO方式，底层实际上通过调用&lt;code>read()&lt;/code>和&lt;code>write()&lt;/code>来实现。&lt;/p>
+&lt;p>通过&lt;code>read()&lt;/code>把数据从硬盘读取到内核缓冲区，再复制到用户缓冲区；然后再通过&lt;code>write()&lt;/code>写入到&lt;code>socket缓冲区&lt;/code>，最后写入网卡设备。&lt;/p>
+&lt;p>整个过程发生了&lt;strong>4次用户态和内核态的上下文切换&lt;/strong>和&lt;strong>4次拷贝&lt;/strong>，具体流程如下：&lt;/p>
+&lt;ol>
+&lt;li>用户进程通过&lt;code>read()&lt;/code>方法向操作系统发起调用，此时上下文从用户态转向内核态&lt;/li>
+&lt;li>DMA控制器把数据从硬盘中拷贝到读缓冲区&lt;/li>
+&lt;li>CPU把读缓冲区数据拷贝到应用缓冲区，上下文从内核态转为用户态，&lt;code>read()&lt;/code>返回&lt;/li>
+&lt;li>用户进程通过&lt;code>write()&lt;/code>方法发起调用，上下文从用户态转为内核态&lt;/li>
+&lt;li>CPU将应用缓冲区中数据拷贝到socket缓冲区&lt;/li>
+&lt;li>DMA控制器把数据从socket缓冲区拷贝到网卡，上下文从内核态切换回用户态，&lt;code>write()&lt;/code>返回&lt;/li>
+&lt;/ol>
+&lt;p>&lt;img src="https://tuchuang-1258133230.cos.ap-shanghai.myqcloud.com/cofISeFWKdjxhJM.png" alt="image.png">&lt;/p>
+&lt;p>什么是&lt;strong>DMA&lt;/strong>拷贝？&lt;/p>
+&lt;p>因为对于一个IO操作而言，都是通过CPU发出对应的指令来完成，但是相比CPU来说，IO的速度很慢，CPU有大量的时间处于等待IO的状态。&lt;/p>
+&lt;p>因此就产生了&lt;strong>DMA（Direct Memory Access）直接内存访问技术&lt;/strong>，本质上来说他就是一块主板上独立的芯片，通过它来进行内存和IO设备的数据传输，从而减少CPU的等待时间。但频繁的拷贝耗时也是对性能的影响。&lt;/p>
+&lt;h2 id="零拷贝">零拷贝&lt;/h2>
+&lt;blockquote>
+&lt;p>零拷贝技术是指计算机执行操作时，CPU不需要先将数据从某处内存复制到另一个特定区域，这种技术通常用于通过网络传输文件时节省CPU周期和内存带宽。&lt;/p>
+&lt;/blockquote>
+&lt;p>对于零拷贝而言，并非真的是完全没有数据拷贝的过程，只不过是减少用户态和内核态的切换次数以及CPU拷贝的次数。&lt;/p>
+&lt;h3 id="几种常见的零拷贝技术">几种常见的零拷贝技术。&lt;/h3>
+&lt;h4 id="mmapwrite">mmap+write&lt;/h4>
+&lt;p>&lt;code>mmap+write&lt;/code>简单来说就是使用&lt;code>mmap&lt;/code>替换了&lt;code>read+write&lt;/code>中的read操作，减少了一次CPU的拷贝。&lt;/p>
+&lt;p>&lt;code>mmap&lt;/code>主要实现方式是将读缓冲区的地址和用户缓冲区的地址进行映射，内核缓冲区和应用缓冲区共享，从而减少了从读缓冲区到用户缓冲区的一次CPU拷贝。&lt;/p>
+&lt;p>&lt;img src="https://tuchuang-1258133230.cos.ap-shanghai.myqcloud.com/OBo5rSebq267alc.png" alt="image.png">&lt;/p>
+&lt;p>整个过程发生了&lt;strong>4次用户态和内核态的上下文切换&lt;/strong>和&lt;strong>3次拷贝&lt;/strong>，具体流程如下：&lt;/p>
+&lt;ol>
+&lt;li>用户进程通过&lt;code>mmap()&lt;/code>方法向操作系统发起调用，上下文从用户态转向内核态&lt;/li>
+&lt;li>DMA控制器把数据从硬盘中拷贝到读缓冲区&lt;/li>
+&lt;li>&lt;strong>上下文从内核态转为用户态，mmap调用返回&lt;/strong>&lt;/li>
+&lt;li>用户进程通过&lt;code>write()&lt;/code>方法发起调用，上下文从用户态转为内核态&lt;/li>
+&lt;li>&lt;strong>CPU将读缓冲区中数据拷贝到socket缓冲区&lt;/strong>&lt;/li>
+&lt;li>DMA控制器把数据从socket缓冲区拷贝到网卡，上下文从内核态切换回用户态，&lt;code>write()&lt;/code>返回&lt;/li>
+&lt;/ol>
+&lt;p>&lt;code>mmap&lt;/code>的方式节省了一次CPU拷贝，同时由于用户进程中的内存是虚拟的，只是映射到内核的读缓冲区，所以可以节省一半的内存空间，比较适合大文件的传输。&lt;/p>
+&lt;h4 id="sendfile">sendfile&lt;/h4>
+&lt;p>相比&lt;code>mmap&lt;/code>来说，&lt;code>sendfile&lt;/code>同样减少了一次CPU拷贝，而且还减少了2次上下文切换。&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#include&lt;/span>&lt;span class="cpf">&amp;lt;sys/sendfile.h&amp;gt;&lt;/span>&lt;span class="cp">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">&lt;/span>&lt;span class="n">ssize_t&lt;/span> &lt;span class="nf">senfile&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">out_fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">in_fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">off_t&lt;/span>&lt;span class="o">*&lt;/span> &lt;span class="n">offset&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">size_t&lt;/span> &lt;span class="n">count&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>&lt;code>sendfile&lt;/code>是Linux2.1内核版本后引入的一个系统调用函数，通过使用&lt;code>sendfile&lt;/code>数据可以直接在内核空间进行传输，因此避免了用户空间和内核空间的拷贝，同时由于使用&lt;code>sendfile&lt;/code>替代了&lt;code>read+write&lt;/code>从而节省了一次系统调用，也就是2次上下文切换。&lt;/p>
+&lt;p>&lt;img src="https://tuchuang-1258133230.cos.ap-shanghai.myqcloud.com/7m1kLB5A9XROjeY.png" alt="image.png">&lt;/p>
+&lt;p>整个过程发生了&lt;strong>2次用户态和内核态的上下文切换&lt;/strong>和&lt;strong>3次拷贝&lt;/strong>，具体流程如下：&lt;/p>
+&lt;ol>
+&lt;li>用户进程通过&lt;code>sendfile()&lt;/code>方法向操作系统发起调用，上下文从用户态转向内核态&lt;/li>
+&lt;li>DMA控制器把数据从硬盘中拷贝到读缓冲区&lt;/li>
+&lt;li>CPU将读缓冲区中数据拷贝到socket缓冲区&lt;/li>
+&lt;li>DMA控制器把数据从socket缓冲区拷贝到网卡，上下文从内核态切换回用户态，&lt;code>sendfile&lt;/code>调用返回&lt;/li>
+&lt;/ol>
+&lt;p>&lt;code>sendfile&lt;/code>方法IO数据对用户空间完全不可见，所以只能适用于完全不需要用户空间处理的情况，比如静态文件服务器。&lt;/p>
+&lt;h4 id="sendfiledma-scattergather">sendfile+DMA Scatter/Gather&lt;/h4>
+&lt;p>Linux2.4内核版本之后对&lt;code>sendfile&lt;/code>做了进一步优化，通过引入新的硬件支持，这个方式叫做DMA Scatter/Gather 分散/收集功能。&lt;/p>
+&lt;p>它将读缓冲区中的数据描述信息--内存地址和偏移量记录到socket缓冲区，由 DMA 根据这些将数据从读缓冲区拷贝到网卡，相比之前版本减少了一次CPU拷贝的过程&lt;/p>
+&lt;p>&lt;img src="https://tuchuang-1258133230.cos.ap-shanghai.myqcloud.com/e263EJmBFIfzAZ9.png" alt="image.png">&lt;/p>
+&lt;p>整个过程发生了&lt;strong>2次用户态和内核态的上下文切换&lt;/strong>和&lt;strong>2次拷贝&lt;/strong>，其中更重要的是完全没有CPU拷贝，具体流程如下：&lt;/p>
+&lt;ol>
+&lt;li>用户进程通过&lt;code>sendfile()&lt;/code>方法向操作系统发起调用，上下文从用户态转向内核态&lt;/li>
+&lt;li>DMA控制器利用scatter把数据从硬盘中拷贝到读缓冲区离散存储&lt;/li>
+&lt;li>CPU把读缓冲区中的文件描述符和数据长度发送到socket缓冲区&lt;/li>
+&lt;li>DMA控制器根据文件描述符和数据长度，使用scatter/gather把数据从内核缓冲区拷贝到网卡&lt;/li>
+&lt;li>&lt;code>sendfile()&lt;/code>调用返回，上下文从内核态切换回用户态&lt;/li>
+&lt;/ol>
+&lt;p>&lt;code>DMA gather&lt;/code>和&lt;code>sendfile&lt;/code>一样数据对用户空间不可见，而且需要硬件支持，同时输入文件描述符只能是文件，但是过程中完全没有CPU拷贝过程，极大提升了性能。&lt;/p>
+&lt;h2 id="总结">总结&lt;/h2>
+&lt;p>由于CPU和IO速度的差异问题，产生了DMA技术，通过DMA搬运来减少CPU的等待时间。&lt;/p>
+&lt;p>传统的IO&lt;code>read+write&lt;/code>方式会产生2次DMA拷贝+2次CPU拷贝，同时有4次上下文切换。&lt;/p>
+&lt;p>而通过&lt;code>mmap+write&lt;/code>方式则产生2次DMA拷贝+1次CPU拷贝，4次上下文切换，通过内存映射减少了一次CPU拷贝，可以减少内存使用，适合大文件的传输。&lt;/p>
+&lt;p>&lt;code>sendfile&lt;/code>方式是新增的一个系统调用函数，产生2次DMA拷贝+1次CPU拷贝，但是只有2次上下文切换。因为只有一次调用，减少了上下文的切换，但是用户空间对IO数据不可见，适用于静态文件服务器。&lt;/p>
+&lt;p>&lt;code>sendfile+DMA gather&lt;/code>方式产生2次DMA拷贝，没有CPU拷贝，而且也只有2次上下文切换。虽然极大地提升了性能，但是需要依赖新的硬件设备支持。&lt;/p></content><category scheme="https://shvinq.com/tech/" term="tech" label="tech"/><category scheme="https://shvinq.com/tags/%E7%9F%A5%E8%AF%86/" term="知识" label="知识"/></entry><entry><title type="text">编码格式</title><link rel="alternate" type="text/html" href="https://shvinq.com/tech/coding-method/"/><id>https://shvinq.com/tech/coding-method/</id><updated>2022-03-27T21:52:56+08:00</updated><published>2021-11-16T10:16:22+08:00</published><author><name>shvinq</name><uri>https://shvinq.com/</uri><email>zhoushuiqing321@gmail.com</email></author><rights>在保留本文作者及本文链接的前提下，非商业用途随意转载分享。</rights><summary type="html">1. ASCII 码 计算机所有信息最终都是一个二进制值。每一个二进制位（bit）有0和1两种状态，因此八个二进制位……</summary><content type="html">&lt;h3 id="1-ascii-码">1. &lt;strong>ASCII 码&lt;/strong>&lt;/h3>
+&lt;p>计算机所有信息最终都是一个二进制值。每一个二进制位（bit）有&lt;code>0&lt;/code>和&lt;code>1&lt;/code>两种状态，因此八个二进制位就可以组合出256种状态，这被称为一个字节（byte）。也就是说，一个字节一共可以用来表示256种不同的状态，每一个状态对应一个符号，就是256个符号，从&lt;code>00000000&lt;/code>到&lt;code>11111111&lt;/code>。&lt;/p>
+&lt;p>上个世纪60年代，美国制定了一套字符编码，对英语字符与二进制位之间的关系，做了统一规定。这被称为 ASCII 码，一直沿用至今。&lt;/p>
+&lt;p>ASCII 码一共规定了128个字符的编码，比如空格&lt;code>SPACE&lt;/code>是32（二进制&lt;code>00100000&lt;/code>），大写的字母&lt;code>A&lt;/code>是65（二进制&lt;code>01000001&lt;/code>）。这128个符号（包括32个不能打印出来的控制符号），只占用了一个字节的后面7位，最前面的一位统一规定为&lt;code>0&lt;/code>。&lt;/p>
+&lt;h3 id="2-非-ascii-编码">2. &lt;strong>非 ASCII 编码&lt;/strong>&lt;/h3>
+&lt;p>英语用128个符号编码就够了，但是用来表示其他语言，128个符号是不够的。比如，简体中文常见的编码方式是 GB2312，使用两个字节表示一个汉字，所以理论上最多可以表示 256 x 256 = 65536 个符号。&lt;/p>
+&lt;h3 id="3-unicode">3. &lt;strong>Unicode&lt;/strong>&lt;/h3>
+&lt;p>Unicode 当然是一个很大的集合，现在的规模可以容纳100多万个符号。每个符号的编码都不一样，比如，&lt;code>U+0639&lt;/code>表示阿拉伯字母&lt;code>Ain&lt;/code>，&lt;code>U+0041&lt;/code>表示英语的大写字母&lt;code>A&lt;/code>，&lt;code>U+4E25&lt;/code>表示汉字&lt;code>严&lt;/code>。具体的符号对应表，可以查询&lt;a href="https://www.unicode.org/">unicode.org&lt;/a>，或者专门的&lt;a href="http://www.chi2ko.com/tool/CJK.htm">汉字对应表&lt;/a>。&lt;/p>
+&lt;h3 id="4-unicode编码">4. Unicode编码&lt;/h3>
+&lt;p>Unicode 只是一个符号集，它只规定了符号的二进制代码，却没有规定这个二进制代码应该如何存储。&lt;/p>
+&lt;p>比如，汉字&lt;code>严&lt;/code>的 Unicode 是十六进制数&lt;code>4E25&lt;/code>，转换成二进制数足足有15位（&lt;code>100111000100101&lt;/code>），也就是说，这个符号的表示至少需要2个字节。表示其他更大的符号，可能需要3个字节或者4个字节，甚至更多。&lt;/p>
+&lt;p>这里就有两个严重的问题：&lt;/p>
+&lt;p>第一个问题是，如何才能区别 Unicode 和 ASCII ？&lt;/p>
+&lt;p>第二个问题是，英文字母只用一个字节表示就够了，如果 Unicode 统一规定，每个符号用三个或四个字节表示，那么每个英文字母前都必然有二到三个字节是&lt;code>0&lt;/code>，这对于存储来说是极大的浪费。&lt;/p>
+&lt;h3 id="5-utf-8">5. UTF-8&lt;/h3>
+&lt;p>UTF-8是使用最广的一种 Unicode 的实现方式。其他实现方式还包括 UTF-16（字符用两个字节或四个字节表示）和 UTF-32（字符用四个字节表示），不过在互联网上基本不用。&lt;strong>UTF-8 是 Unicode 的实现方式之一。&lt;/strong>&lt;/p>
+&lt;p>UTF-8 最大的一个特点，就是它是一种变长的编码方式。它可以使用1~4个字节表示一个符号，根据不同的符号而变化字节长度。&lt;/p>
+&lt;p>UTF-8 的编码规则很简单，只有二条：&lt;/p>
+&lt;ol>
+&lt;li>对于单字节的符号，字节的第一位设为&lt;code>0&lt;/code>，后面7位为这个符号的 Unicode 码。因此对于英语字母，UTF-8 编码和 ASCII 码是相同的。&lt;/li>
+&lt;li>对于&lt;code>n&lt;/code>字节的符号（&lt;code>n &amp;gt; 1&lt;/code>），第一个字节的前&lt;code>n&lt;/code>位都设为&lt;code>1&lt;/code>，第&lt;code>n + 1&lt;/code>位设为&lt;code>0&lt;/code>，后面字节的前两位一律设为&lt;code>10&lt;/code>。剩下的没有提及的二进制位，全部为这个符号的 Unicode 码。&lt;/li>
+&lt;/ol>
+&lt;table>
+&lt;thead>
+&lt;tr>
+&lt;th>码点范围&lt;/th>
+&lt;th>码点位数&lt;/th>
+&lt;th>字节1&lt;/th>
+&lt;th>字节2&lt;/th>
+&lt;th>字节3&lt;/th>
+&lt;th>字节4&lt;/th>
+&lt;/tr>
+&lt;/thead>
+&lt;tbody>
+&lt;tr>
+&lt;td>U+0000 ~ U+007F&lt;/td>
+&lt;td>7&lt;/td>
+&lt;td>0xxxxxxx&lt;/td>
+&lt;td>&lt;/td>
+&lt;td>&lt;/td>
+&lt;td>&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>U+0080 ~ U+07FF&lt;/td>
+&lt;td>11&lt;/td>
+&lt;td>110xxxxx&lt;/td>
+&lt;td>10xxxxxx&lt;/td>
+&lt;td>&lt;/td>
+&lt;td>&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>U+0800 ~ U+FFFF&lt;/td>
+&lt;td>16&lt;/td>
+&lt;td>1110xxxx&lt;/td>
+&lt;td>10xxxxxx&lt;/td>
+&lt;td>10xxxxxx&lt;/td>
+&lt;td>&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>U+10000 ~ U+10FFFF&lt;/td>
+&lt;td>21&lt;/td>
+&lt;td>11110xxx&lt;/td>
+&lt;td>10xxxxxx&lt;/td>
+&lt;td>10xxxxxx&lt;/td>
+&lt;td>10xxxxxx&lt;/td>
+&lt;/tr>
+&lt;/tbody>
+&lt;/table>
+&lt;p>如果一个字节的第一位是&lt;code>0&lt;/code>，则这个字节单独就是一个字符；如果第一位是&lt;code>1&lt;/code>，则连续有多少个&lt;code>1&lt;/code>，就表示当前字符占用多少个字节。&lt;/p>
+&lt;p>例如&lt;code>严&lt;/code>的 Unicode 是&lt;code>4E25&lt;/code>（&lt;code>100111000100101&lt;/code>），根据上表，可以发现&lt;code>4E25&lt;/code>处在第三行的范围内（&lt;code>0000 0800 - 0000 FFFF&lt;/code>），因此&lt;code>严&lt;/code>的 UTF-8 编码需要三个字节，即格式是&lt;code>1110xxxx 10xxxxxx 10xxxxxx&lt;/code>。然后，从&lt;code>严&lt;/code>的最后一个二进制位开始，依次从后向前填入格式中的&lt;code>x&lt;/code>，多出的位补&lt;code>0&lt;/code>。这样就得到了，&lt;code>严&lt;/code>的 UTF-8 编码是&lt;code>11100100 10111000 10100101&lt;/code>，转换成十六进制就是&lt;code>E4B8A5&lt;/code>。&lt;/p></content><category scheme="https://shvinq.com/tech/" term="tech" label="tech"/><category scheme="https://shvinq.com/tags/%E7%9F%A5%E8%AF%86/" term="知识" label="知识"/></entry><entry><title type="text">IO多路复用详解</title><link rel="alternate" type="text/html" href="https://shvinq.com/tech/io-multiplex/"/><id>https://shvinq.com/tech/io-multiplex/</id><updated>2022-03-27T21:52:56+08:00</updated><published>2021-10-24T13:05:35+08:00</published><author><name>shvinq</name><uri>https://shvinq.com/</uri><email>zhoushuiqing321@gmail.com</email></author><rights>在保留本文作者及本文链接的前提下，非商业用途随意转载分享。</rights><summary type="html">I/O 多路复用之select、poll、epoll详解 select，poll，epoll都是IO多路复用……</summary><content type="html">&lt;h2 id="io-多路复用之selectpollepoll详解">I/O 多路复用之select、poll、epoll详解&lt;/h2>
+&lt;p>select，poll，epoll都是IO多路复用的机制。&lt;/p>
+&lt;p>I/O多路复用就是通过一种机制: &lt;strong>一个进程可以监视多个描述符，一旦某个描述符就绪（一般是读就绪或者写就绪），能够通知程序进行相应的读写操作。&lt;/strong>&lt;/p>
+&lt;p>但select，poll，epoll本质上都是同步I/O，因为他们都需要在读写事件就绪后自己负责进行读写，也就是说这个读写过程是阻塞的，而异步I/O则无需自己负责进行读写，异步I/O的实现会负责把数据从内核拷贝到用户空间。&lt;/p>
+&lt;h2 id="select">Select&lt;/h2>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="kt">int&lt;/span> &lt;span class="nf">select&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">n&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">fd_set&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">readfds&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">fd_set&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">writefds&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">fd_set&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">exceptfds&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">struct&lt;/span> &lt;span class="n">timeval&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">timeout&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>select 函数监视的文件描述符分3类，分别是writefds、readfds、和exceptfds。调用后select函数会阻塞，直到有文件描述符就绪（有数据 可读、可写、或者有except），或者超时（timeout指定等待时间，如果立即返回设为0即可，如果设置为NULL是永远等待下去，直到有描述符准备好再返回），函数返回。当select函数返回后，可以通过遍历fdset，来找到就绪的描述符。&lt;/p>
+&lt;p>select目前几乎在所有的平台上支持，其良好跨平台支持也是它的一个优点。select的一 个缺点在于单个进程能够监视的文件描述符的数量存在最大限制，在Linux上一般为1024，可以通过修改宏定义甚至重新编译内核的方式提升这一限制，但 是这样也会造成效率的降低。&lt;/p>
+&lt;h2 id="poll">Poll&lt;/h2>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="kt">int&lt;/span> &lt;span class="nf">poll&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="k">struct&lt;/span> &lt;span class="n">pollfd&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">fds&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">unsigned&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">nfds&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">timeout&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>不同与select使用三个位图来表示三个fdset的方式，poll使用一个 pollfd的指针实现。&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="k">struct&lt;/span> &lt;span class="n">pollfd&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* file descriptor */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">short&lt;/span> &lt;span class="n">events&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* requested events to watch */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">short&lt;/span> &lt;span class="n">revents&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* returned events witnessed */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">};&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>pollfd结构包含了要监视的event和发生的event，不再使用select &lt;code>参数-值&lt;/code>传递的方式。同时，pollfd并没有最大数量限制（但是数量过大后性能也是会下降）。 和select函数一样，poll返回后，需要轮询pollfd来获取就绪的描述符。&lt;/p>
+&lt;blockquote>
+&lt;p>从上面看，select和poll都需要在返回后，&lt;code>通过遍历文件描述符来获取已经就绪的socket&lt;/code>。事实上，同时连接的大量客户端在一时刻可能只有很少的处于就绪状态，因此随着监视的描述符数量的增长，其效率也会线性下降。&lt;/p>
+&lt;/blockquote>
+&lt;h2 id="epoll">Epoll&lt;/h2>
+&lt;p>相对于select和poll来说，epoll更加灵活，没有描述符限制。epoll使用一个文件描述符管理多个描述符，将用户关系的文件描述符的事件存放到内核的一个事件表中，这样在用户空间和内核空间的copy只需一次。&lt;/p>
+&lt;h3 id="一epoll操作过程">一、epoll操作过程&lt;/h3>
+&lt;p>epoll操作过程需要三个接口，分别如下：&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="kt">int&lt;/span> &lt;span class="nf">epoll_create&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">size&lt;/span>&lt;span class="p">)&lt;/span>&lt;span class="err">；&lt;/span>&lt;span class="c1">//创建一个epoll的句柄，size用来告诉内核这个监听的数目一共有多大
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">epoll_ctl&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">epfd&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">op&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">struct&lt;/span> &lt;span class="n">epoll_event&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">event&lt;/span>&lt;span class="p">)&lt;/span>&lt;span class="err">；&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="kt">int&lt;/span> &lt;span class="n">epoll_wait&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">epfd&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">struct&lt;/span> &lt;span class="n">epoll_event&lt;/span> &lt;span class="o">*&lt;/span> &lt;span class="n">events&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">maxevents&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">timeout&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>&lt;strong>1. int epoll_create(int size);&lt;/strong>
+创建一个epoll的句柄，size用来告诉内核这个监听的数目一共有多大，这个参数不同于select()中的第一个参数，给出最大监听的fd+1的值，&lt;code>参数size并不是限制了epoll所能监听的描述符最大个数，只是对内核初始分配内部数据结构的一个建议&lt;/code>。
+当创建好epoll句柄后，它就会占用一个fd值，在linux下如果查看/proc/进程id/fd/，是能够看到这个fd的，所以在使用完epoll后，必须调用close()关闭，否则可能导致fd被耗尽。&lt;/p>
+&lt;p>&lt;strong>2. int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)；&lt;/strong>
+函数是对指定描述符fd执行op操作。&lt;/p>
+&lt;ul>
+&lt;li>epfd：是epoll_create()的返回值。&lt;/li>
+&lt;li>op：表示op操作，用三个宏来表示：添加EPOLL_CTL_ADD，删除EPOLL_CTL_DEL，修改EPOLL_CTL_MOD。分别添加、删除和修改对fd的监听事件。&lt;/li>
+&lt;li>fd：是需要监听的fd（文件描述符）&lt;/li>
+&lt;li>epoll_event：是告诉内核需要监听什么事，struct epoll_event结构如下：&lt;/li>
+&lt;/ul>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="k">struct&lt;/span> &lt;span class="n">epoll_event&lt;/span> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">__uint32_t&lt;/span> &lt;span class="n">events&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* Epoll events */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">epoll_data_t&lt;/span> &lt;span class="n">data&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* User data variable */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">};&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">//events可以是以下几个宏的集合：
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="n">EPOLLIN&lt;/span> &lt;span class="err">：表示对应的文件描述符可以读（包括对端&lt;/span>&lt;span class="n">SOCKET正常关闭&lt;/span>&lt;span class="err">）；&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="n">EPOLLOUT&lt;/span>&lt;span class="err">：表示对应的文件描述符可以写；&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="n">EPOLLPRI&lt;/span>&lt;span class="err">：表示对应的文件描述符有紧急的数据可读（这里应该表示有带外数据到来）；&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="n">EPOLLERR&lt;/span>&lt;span class="err">：表示对应的文件描述符发生错误；&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="n">EPOLLHUP&lt;/span>&lt;span class="err">：表示对应的文件描述符被挂断；&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="n">EPOLLET&lt;/span>&lt;span class="err">：&lt;/span> &lt;span class="err">将&lt;/span>&lt;span class="n">EPOLL设为边缘触发&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">Edge&lt;/span> &lt;span class="n">Triggered&lt;/span>&lt;span class="p">)&lt;/span>&lt;span class="err">模式，这是相对于水平触发&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">Level&lt;/span> &lt;span class="n">Triggered&lt;/span>&lt;span class="p">)&lt;/span>&lt;span class="err">来说的。&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="n">EPOLLONESHOT&lt;/span>&lt;span class="err">：只监听一次事件，当监听完这次事件之后，如果还需要继续监听这个&lt;/span>&lt;span class="n">socket的话&lt;/span>&lt;span class="err">，需要再次把这个&lt;/span>&lt;span class="n">socket加入到EPOLL队列里&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>&lt;strong>3. int epoll_wait(int epfd, struct epoll_event * events, int maxevents, int timeout);&lt;/strong>
+等待epfd上的io事件，最多返回maxevents个事件。
+参数events用来从内核得到事件的集合，maxevents告之内核这个events有多大，这个maxevents的值不能大于创建epoll_create()时的size，参数timeout是超时时间（毫秒，0会立即返回，-1将不确定，也有说法说是永久阻塞）。该函数返回需要处理的事件数目，如返回0表示已超时。&lt;/p>
+&lt;h3 id="二工作模式">二、工作模式&lt;/h3>
+&lt;p>epoll对文件描述符的操作有两种模式：&lt;strong>LT（level trigger）&lt;strong>和&lt;/strong>ET（edge trigger）&lt;/strong>。LT模式是默认模式，LT模式与ET模式的区别如下：&lt;/p>
+&lt;ul>
+&lt;li>&lt;strong>LT模式&lt;/strong>：当epoll_wait检测到描述符事件发生并将此事件通知应用程序，&lt;code>应用程序可以不立即处理该事件&lt;/code>。下次调用epoll_wait时，会再次响应应用程序并通知此事件。&lt;/li>
+&lt;li>&lt;strong>ET模式&lt;/strong>：当epoll_wait检测到描述符事件发生并将此事件通知应用程序，&lt;code>应用程序必须立即处理该事件&lt;/code>。如果不处理，下次调用epoll_wait时，不会再次响应应用程序并通知此事件。&lt;/li>
+&lt;/ul>
+&lt;h4 id="1-lt模式">1. LT模式&lt;/h4>
+&lt;p>LT(level triggered)是缺省的工作方式，并且同时支持block和no-block socket。在这种做法中，内核告诉你一个文件描述符是否就绪了，然后你可以对这个就绪的fd进行IO操作。如果你不作任何操作，内核还是会继续通知你的。&lt;/p>
+&lt;h4 id="2-et模式">2. ET模式&lt;/h4>
+&lt;p>ET(edge-triggered)是高速工作方式，只支持no-block socket。在这种模式下，当描述符从未就绪变为就绪时，内核通过epoll告诉你。然后它会假设你知道文件描述符已经就绪，并且不会再为那个文件描述符发送更多的就绪通知，直到你做了某些操作导致那个文件描述符不再为就绪状态了(比如，你在发送，接收或者接收请求，或者发送接收的数据少于一定量时导致了一个EWOULDBLOCK 错误）。但是请注意，如果一直不对这个fd做IO操作(从而导致它再次变成未就绪)，内核不会发送更多的通知(only once)&lt;/p>
+&lt;p>ET模式在很大程度上减少了epoll事件被重复触发的次数，因此效率要比LT模式高。epoll工作在ET模式的时候，必须使用非阻塞套接口，以避免由于一个文件句柄的阻塞读/阻塞写操作把处理多个文件描述符的任务饿死。&lt;/p>
+&lt;h4 id="3-总结">3. 总结&lt;/h4>
+&lt;p>&lt;strong>假如有这样一个例子：&lt;/strong>&lt;/p>
+&lt;ol>
+&lt;li>我们已经把一个用来从管道中读取数据的文件句柄(RFD)添加到epoll描述符&lt;/li>
+&lt;li>这个时候从管道的另一端被写入了2KB的数据&lt;/li>
+&lt;li>调用epoll_wait(2)，并且它会返回RFD，说明它已经准备好读取操作&lt;/li>
+&lt;li>然后我们读取了1KB的数据&lt;/li>
+&lt;li>调用epoll_wait(2)......&lt;/li>
+&lt;/ol>
+&lt;p>&lt;strong>LT模式：&lt;/strong>
+如果是LT模式，那么在第5步调用epoll_wait(2)之后，仍然能受到通知。&lt;/p>
+&lt;p>&lt;strong>ET模式：&lt;/strong>
+如果我们在第1步将RFD添加到epoll描述符的时候使用了EPOLLET标志，那么在第5步调用epoll_wait(2)之后将有可能会挂起，因为剩余的数据还存在于文件的输入缓冲区内，而且数据发出端还在等待一个针对已经发出数据的反馈信息。只有在监视的文件句柄上发生了某个事件的时候 ET 工作模式才会汇报事件。因此在第5步的时候，调用者可能会放弃等待仍在存在于文件输入缓冲区内的剩余数据。&lt;/p>
+&lt;p>当使用epoll的ET模型来工作时，当产生了一个EPOLLIN事件后，
+读数据的时候需要考虑的是当recv()返回的大小如果等于请求的大小，那么很有可能是缓冲区还有数据未读完，也意味着该次事件还没有处理完，所以还需要再次读取：&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="k">while&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">rs&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">buflen&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">recv&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">activeevents&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">i&lt;/span>&lt;span class="p">].&lt;/span>&lt;span class="n">data&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">),&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buflen&lt;/span> &lt;span class="o">&amp;lt;&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1">// 由于是非阻塞的模式,所以当errno为EAGAIN时,表示当前缓冲区已无数据可读
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="c1">// 在这里就当作是该次事件已处理完成
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="k">if&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">errno&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="n">EAGAIN&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="k">break&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">else&lt;/span> &lt;span class="k">return&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">else&lt;/span> &lt;span class="k">if&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buflen&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1">// 这里表示对端的socket已正常关闭.
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buflen&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="n">rs&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="mi">1&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="c1">// 需要再次读取
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="k">else&lt;/span> &lt;span class="n">rs&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;blockquote>
+&lt;p>&lt;strong>Linux中的EAGAIN含义&lt;/strong>&lt;/p>
+&lt;/blockquote>
+&lt;p>Linux环境下开发经常会碰到很多错误(设置errno)，其中EAGAIN是其中比较常见的一个错误(比如用在非阻塞操作中)。
+从字面上来看，是提示再试一次。这个错误经常出现在当应用程序进行一些非阻塞(non-blocking)操作(对文件或socket)的时候。&lt;/p>
+&lt;ul>
+&lt;li>
+&lt;p>例如，以 O_NONBLOCK的标志打开文件&lt;code>/socket/FIFO&lt;/code>，如果你连续做read操作而没有数据可读。此时程序不会阻塞起来等待数据准备就绪返回，read函数会返回一个错误EAGAIN，提示你的应用程序现在没有数据可读请稍后再试。&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>又例如，当一个系统调用(比如fork)因为没有足够的资源(比如虚拟内存)而执行失败，返回EAGAIN提示其再调用一次(也许下次就能成功)。&lt;/p>
+&lt;/li>
+&lt;/ul>
+&lt;h3 id="三代码演示">三、代码演示&lt;/h3>
+&lt;p>下面是一段不完整的代码且格式不对，意在表述上面的过程，去掉了一些模板代码。&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#define IPADDRESS &amp;#34;127.0.0.1&amp;#34;
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#define PORT 8787
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#define MAXSIZE 1024
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#define LISTENQ 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#define FDSIZE 1000
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#define EPOLLEVENTS 100
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="n">listenfd&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">socket_bind&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">IPADDRESS&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">PORT&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="k">struct&lt;/span> &lt;span class="n">epoll_event&lt;/span> &lt;span class="n">events&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">EPOLLEVENTS&lt;/span>&lt;span class="p">];&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">//创建一个描述符
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="n">epollfd&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">epoll_create&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">FDSIZE&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">//添加监听描述符事件
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="n">add_event&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">listenfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">EPOLLIN&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">//循环等待
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="k">for&lt;/span> &lt;span class="p">(&lt;/span> &lt;span class="p">;&lt;/span> &lt;span class="p">;&lt;/span> &lt;span class="p">){&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1">//该函数返回已经准备好的描述符事件数目
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">ret&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">epoll_wait&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">events&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">EPOLLEVENTS&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="o">-&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1">//处理接收到的连接
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">handle_events&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">events&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">ret&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">listenfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">//事件处理函数
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="k">static&lt;/span> &lt;span class="kt">void&lt;/span> &lt;span class="n">handle_events&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="k">struct&lt;/span> &lt;span class="n">epoll_event&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">events&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">num&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">listenfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">char&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">i&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1">//进行遍历;这里只要遍历已经准备好的io事件。num并不是当初epoll_create时的FDSIZE。
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="k">for&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">i&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">;&lt;/span>&lt;span class="n">i&lt;/span> &lt;span class="o">&amp;lt;&lt;/span> &lt;span class="n">num&lt;/span>&lt;span class="p">;&lt;/span>&lt;span class="n">i&lt;/span>&lt;span class="o">++&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">fd&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">events&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">i&lt;/span>&lt;span class="p">].&lt;/span>&lt;span class="n">data&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1">//根据描述符的类型和事件类型进行处理
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="k">if&lt;/span> &lt;span class="p">((&lt;/span>&lt;span class="n">fd&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="n">listenfd&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">&amp;amp;&amp;amp;&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">events&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">i&lt;/span>&lt;span class="p">].&lt;/span>&lt;span class="n">events&lt;/span> &lt;span class="o">&amp;amp;&lt;/span> &lt;span class="n">EPOLLIN&lt;/span>&lt;span class="p">))&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">handle_accpet&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">listenfd&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">else&lt;/span> &lt;span class="nf">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">events&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">i&lt;/span>&lt;span class="p">].&lt;/span>&lt;span class="n">events&lt;/span> &lt;span class="o">&amp;amp;&lt;/span> &lt;span class="n">EPOLLIN&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">do_read&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">else&lt;/span> &lt;span class="nf">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">events&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">i&lt;/span>&lt;span class="p">].&lt;/span>&lt;span class="n">events&lt;/span> &lt;span class="o">&amp;amp;&lt;/span> &lt;span class="n">EPOLLOUT&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">do_write&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">//添加事件
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="k">static&lt;/span> &lt;span class="kt">void&lt;/span> &lt;span class="n">add_event&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">state&lt;/span>&lt;span class="p">){&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">struct&lt;/span> &lt;span class="n">epoll_event&lt;/span> &lt;span class="n">ev&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">ev&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">events&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">state&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">ev&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">data&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">fd&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">epoll_ctl&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">EPOLL_CTL_ADD&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">ev&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">//处理接收到的连接
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="k">static&lt;/span> &lt;span class="kt">void&lt;/span> &lt;span class="n">handle_accpet&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">listenfd&lt;/span>&lt;span class="p">){&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">clifd&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">struct&lt;/span> &lt;span class="n">sockaddr_in&lt;/span> &lt;span class="n">cliaddr&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">socklen_t&lt;/span> &lt;span class="n">cliaddrlen&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">clifd&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">accept&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">listenfd&lt;/span>&lt;span class="p">,(&lt;/span>&lt;span class="k">struct&lt;/span> &lt;span class="n">sockaddr&lt;/span>&lt;span class="o">*&lt;/span>&lt;span class="p">)&lt;/span>&lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">cliaddr&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">cliaddrlen&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">clifd&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="o">-&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">perror&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;accpet error:&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">else&lt;/span> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">printf&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;accept a new client: %s:%d&lt;/span>&lt;span class="se">\n&lt;/span>&lt;span class="s">&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">inet_ntoa&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">cliaddr&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">sin_addr&lt;/span>&lt;span class="p">),&lt;/span>&lt;span class="n">cliaddr&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">sin_port&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//添加一个客户描述符和事件
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">add_event&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">clifd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">EPOLLIN&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">//读处理
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="k">static&lt;/span> &lt;span class="kt">void&lt;/span> &lt;span class="n">do_read&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">char&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">){&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">nread&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">nread&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">read&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">MAXSIZE&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">nread&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="o">-&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">perror&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;read error:&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">close&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//记住close fd
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">delete_event&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">EPOLLIN&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//删除监听
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">else&lt;/span> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">nread&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">fprintf&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">stderr&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="s">&amp;#34;client close.&lt;/span>&lt;span class="se">\n&lt;/span>&lt;span class="s">&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">close&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//记住close fd
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">delete_event&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">EPOLLIN&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//删除监听
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">else&lt;/span> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">printf&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;read message is : %s&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1">//修改描述符对应的事件，由读改为写
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">modify_event&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">EPOLLOUT&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">//写处理
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="k">static&lt;/span> &lt;span class="kt">void&lt;/span> &lt;span class="n">do_write&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">char&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">nwrite&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">nwrite&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">write&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">strlen&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">));&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">nwrite&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="o">-&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">){&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">perror&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;write error:&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">close&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//记住close fd
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">delete_event&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">EPOLLOUT&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//删除监听
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="p">}&lt;/span>&lt;span class="k">else&lt;/span>&lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">modify_event&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">EPOLLIN&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">memset&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="mi">0&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">MAXSIZE&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">//删除事件
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="k">static&lt;/span> &lt;span class="kt">void&lt;/span> &lt;span class="n">delete_event&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">state&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">struct&lt;/span> &lt;span class="n">epoll_event&lt;/span> &lt;span class="n">ev&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">ev&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">events&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">state&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">ev&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">data&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">fd&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">epoll_ctl&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">EPOLL_CTL_DEL&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">ev&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">//修改事件
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="k">static&lt;/span> &lt;span class="kt">void&lt;/span> &lt;span class="n">modify_event&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">state&lt;/span>&lt;span class="p">){&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">struct&lt;/span> &lt;span class="n">epoll_event&lt;/span> &lt;span class="n">ev&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">ev&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">events&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">state&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">ev&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">data&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">fd&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">epoll_ctl&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">epollfd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">EPOLL_CTL_MOD&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">ev&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">//注：另外一端我就省了
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;h3 id="四epoll总结">四、epoll总结&lt;/h3>
+&lt;p>在 select/poll中，进程只有在调用一定的方法后，内核才对所有监视的文件描述符进行扫描。而&lt;strong>epoll事先通过epoll_ctl()来注册一个文件描述符，一旦基于某个文件描述符就绪时，内核会采用类似callback的回调机制，迅速激活这个文件描述符，当进程调用epoll_wait() 时便得到通知&lt;/strong>。(&lt;code>此处去掉了遍历文件描述符，而是通过监听回调的的机制&lt;/code>。这正是epoll的魅力所在。)&lt;/p>
+&lt;p>&lt;strong>epoll的优点主要是一下几个方面：&lt;/strong>
+监视的描述符数量不受限制，它所支持的FD上限是最大可以打开文件的数目，这个数字一般远大于2048,举个例子,在1GB内存的机器上大约是10万左 右，具体数目可以cat /proc/sys/fs/file-max查看，一般来说这个数目和系统内存关系很大。select的最大缺点就是进程打开的fd是有数量限制的。这对于连接数量比较大的服务器来说根本不能满足。&lt;/p>
+&lt;p>IO的效率不会随着监视fd的数量的增长而下降。epoll不同于select和poll轮询的方式，而是通过每个fd定义的回调函数来实现的。只有就绪的fd才会执行回调函数。&lt;/p>
+&lt;blockquote>
+&lt;p>如果没有大量的idle -connection或者dead-connection，epoll的效率并不会比select/poll高很多，但是当遇到大量的idle- connection，就会发现epoll的效率大大高于select/poll。&lt;/p>
+&lt;/blockquote></content><category scheme="https://shvinq.com/tech/" term="tech" label="tech"/><category scheme="https://shvinq.com/tags/%E7%9F%A5%E8%AF%86/" term="知识" label="知识"/></entry><entry><title type="text">Linux IO相关</title><link rel="alternate" type="text/html" href="https://shvinq.com/tech/io/"/><id>https://shvinq.com/tech/io/</id><updated>2022-03-27T21:52:56+08:00</updated><published>2021-10-17T14:23:47+08:00</published><author><name>shvinq</name><uri>https://shvinq.com/</uri><email>zhoushuiqing321@gmail.com</email></author><rights>在保留本文作者及本文链接的前提下，非商业用途随意转载分享。</rights><summary type="html">1.基础概念说明 用户空间和内核空间 进程切换 进程的阻塞 文件描述符 缓存 I/O 用户空间与内核空间 现在的OS都是……</summary><content type="html">&lt;h1 id="1基础概念说明">1.基础概念说明&lt;/h1>
+&lt;ul>
+&lt;li>用户空间和内核空间&lt;/li>
+&lt;li>进程切换&lt;/li>
+&lt;li>进程的阻塞&lt;/li>
+&lt;li>文件描述符&lt;/li>
+&lt;li>缓存 I/O&lt;/li>
+&lt;/ul>
+&lt;h3 id="用户空间与内核空间">用户空间与内核空间&lt;/h3>
+&lt;p>现在的OS都是采用虚拟存储器，对于32位系统来说，其寻址空间(虚拟存储空间)为4G(2的32次方)。内核是OS的核心，独立于普通的应用程序，可以访问受保护的内存空间，也有访问底层硬件的权限。为了不让用户进程直接操作内核，保证内核安全，操作系统将虚拟空间划分了两部分，内核空间和用户空间。&lt;/p>
+&lt;p>针对linux操作系统而言，将最高的1G字节（从虚拟地址0xC0000000到0xFFFFFFFF），供内核使用，称为内核空间，而将较低的3G字节（从虚拟地址0x00000000到0xBFFFFFFF），供各个进程使用，称为用户空间。&lt;/p>
+&lt;h3 id="进程切换">进程切换&lt;/h3>
+&lt;p>为了控制进程的执行，内核必须有能力挂起正在CPU上运行的进程，并恢复以前挂起的某个进程的执行。这种行为被称为进程切换。
+从一个进程的运行转到另一个进程上运行，这个过程中经过下面这些变化：&lt;/p>
+&lt;ol>
+&lt;li>保存处理机上下文，包括程序计数器和其他寄存器。&lt;/li>
+&lt;li>更新PCB信息。&lt;/li>
+&lt;li>把进程的PCB移入相应的队列，如就绪、在某事件阻塞等队列。&lt;/li>
+&lt;li>选择另一个进程执行，并更新其PCB。&lt;/li>
+&lt;li>更新内存管理的数据结构。&lt;/li>
+&lt;li>恢复处理机上下文。&lt;/li>
+&lt;/ol>
+&lt;h3 id="进程的阻塞">进程的阻塞&lt;/h3>
+&lt;p>正在执行的进程，由于期待的某些事件未发生，如请求系统资源失败、等待某种操作的完成、新数据尚未到达或无新工作做等，则由系统自动执行阻塞原语(Block)，使自己由运行状态变为阻塞状态。&lt;/p>
+&lt;p>进程的阻塞是进程自身的一种主动行为，也因此只有处于运行态的进程（获得CPU），才可能将其转为阻塞状态。&lt;code>当进程进入阻塞状态，是不占用CPU资源的&lt;/code>。&lt;/p>
+&lt;h3 id="文件描述符fd">文件描述符fd&lt;/h3>
+&lt;p>文件描述符fd是一个用于表述指向文件的引用的抽象化概念。&lt;/p>
+&lt;p>文件描述符在形式上是一个非负整数。实际上，它是一个索引值，指向内核为每一个进程所维护的该进程打开文件的记录表。当程序打开一个现有文件或者创建一个新文件时，内核向进程返回一个文件描述符。&lt;/p>
+&lt;h3 id="缓存-io">缓存 I/O&lt;/h3>
+&lt;p>缓存 I/O 又被称作标准 I/O，大多数文件系统的默认 I/O 操作都是缓存 I/O。在 Linux 的缓存 I/O 机制中，操作系统会将 I/O 的数据缓存在文件系统的页缓存（ page cache ）中。&lt;/p>
+&lt;p>也就是说，数据会先被拷贝到操作系统内核的缓冲区中，然后才会从操作系统内核的缓冲区拷贝到应用程序的地址空间。&lt;/p>
+&lt;p>&lt;strong>缓存 I/O 的缺点：&lt;/strong>
+数据在传输过程中需要在应用程序地址空间和内核进行多次数据拷贝操作，这些数据拷贝操作所带来的 CPU 以及内存开销是非常大的。&lt;/p>
+&lt;h1 id="2io模式">2.IO模式&lt;/h1>
+&lt;p>对于一次IO访问（以read举例），数据会先被拷贝到操作系统内核的缓冲区中，然后才会从操作系统内核的缓冲区拷贝到应用程序的地址空间。所以说，当一个read操作发生时，它会经历两个阶段：&lt;/p>
+&lt;ol>
+&lt;li>等待数据准备 (Waiting for the data to be ready)&lt;/li>
+&lt;li>将数据从内核拷贝到进程中 (Copying the data from the kernel to the process)&lt;/li>
+&lt;/ol>
+&lt;p>正是这两个阶段的存在，linux系统产生了下面五种网络模式的方案。&lt;/p>
+&lt;ul>
+&lt;li>阻塞 I/O（blocking IO）&lt;/li>
+&lt;li>非阻塞 I/O（nonblocking IO）&lt;/li>
+&lt;li>I/O 多路复用（ IO multiplexing）&lt;/li>
+&lt;li>信号驱动 I/O（ signal driven IO）：实际不常用暂忽略&lt;/li>
+&lt;li>异步 I/O（asynchronous IO）&lt;/li>
+&lt;/ul>
+&lt;h3 id="阻塞-ioblocking-io">阻塞 I/O（blocking IO）&lt;/h3>
+&lt;p>在linux中，默认情况下所有的socket都是blocking，一个典型的读操作流程大概是这样&lt;/p>
+&lt;p>&lt;img src="https://tuchuang-1258133230.cos.ap-shanghai.myqcloud.com/P1a8JcptWjMQwlz.png" alt="image.png">&lt;/p>
+&lt;p>当用户进程调用了recvfrom这个系统调用，kernel就开始了IO的第一个阶段：准备数据（对于网络IO来说，很多时候数据在一开始还没有到达。比如，还没有收到一个完整的UDP包。这个时候kernel就要等待足够的数据到来）。这个过程需要等待，也就是说数据被拷贝到操作系统内核的缓冲区中是需要一个过程的。而在用户进程这边，整个进程会被阻塞（当然，是进程自己选择的阻塞）。&lt;/p>
+&lt;p>当kernel一直等到数据准备好了，它就会将数据从kernel中拷贝到用户内存，然后kernel返回结果，用户进程才解除block的状态，重新运行起来。&lt;/p>
+&lt;blockquote>
+&lt;p>所以，blocking IO的特点就是在IO执行的两个阶段都被block了。&lt;/p>
+&lt;/blockquote>
+&lt;h3 id="非阻塞-iononblocking-io">非阻塞 I/O（nonblocking IO）&lt;/h3>
+&lt;p>linux下，可以通过设置socket使其变为non-blocking。当对一个non-blocking socket执行读操作时，流程是这个样子：&lt;/p>
+&lt;p>&lt;img src="https://tuchuang-1258133230.cos.ap-shanghai.myqcloud.com/WtSmNU8G2ARQ6sB.png" alt="image.png">&lt;/p>
+&lt;p>当用户进程发出recvfrom操作时，如果kernel中的数据还没有准备好，那么它并不会block用户进程，而是立刻返回一个error。从用户进程角度讲 ，它发起一个read操作后，并不需要等待，而是马上就得到了一个结果。用户进程判断结果是一个error时，它就知道数据还没有准备好，于是它可以再次发送read操作。&lt;/p>
+&lt;p>一旦kernel中的数据准备好了，并且又再次收到了用户进程的system call，那么它马上就将数据拷贝到了用户内存，然后返回。&lt;/p>
+&lt;blockquote>
+&lt;p>所以，nonblocking IO的特点是用户进程需要&lt;strong>不断的主动询问&lt;/strong>kernel数据好了没有。&lt;/p>
+&lt;/blockquote>
+&lt;h3 id="io-多路复用-io-multiplexing">I/O 多路复用（ IO multiplexing）&lt;/h3>
+&lt;p>IO multiplexing就是我们说的select，poll，epoll。select/epoll的好处就在于单个process就可以同时处理多个网络连接的IO。&lt;/p>
+&lt;p>基本原理就是select，poll，epoll这个function会不断的轮询所负责的所有socket，当某个socket有数据到达了，就通知用户进程。&lt;/p>
+&lt;p>&lt;img src="https://tuchuang-1258133230.cos.ap-shanghai.myqcloud.com/tfGIkRiZjHByV5J.png" alt="image.png">&lt;/p>
+&lt;p>&lt;code>当用户进程调用了select，那么整个进程会被block&lt;/code>，而同时，kernel会“监视”所有select负责的socket，当任何一个socket中的数据准备好了，select就会返回。这个时候用户进程再调用read操作，将数据从kernel拷贝到用户进程。&lt;/p>
+&lt;blockquote>
+&lt;p>所以，I/O 多路复用的特点是通过一种机制一个进程能同时等待多个文件描述符，而这些文件描述符（套接字描述符）其中的任意一个进入读就绪状态，select()函数就可以返回。&lt;/p>
+&lt;/blockquote>
+&lt;p>这个图和blocking IO的图其实并没有太大的不同，事实上，还更差一些。因为这里需要使用两个system call (select 和 recvfrom)，而blocking IO只调用了一个system call (recvfrom)。但是，用select的优势在于它可以同时处理多个connection。&lt;/p>
+&lt;p>select/epoll的优势并不是对于单个连接能处理得更快，而是在于能处理更多的连接。）&lt;/p>
+&lt;p>在IO multiplexing Model中，实际中，对于每一个socket，一般都设置成为non-blocking，但是，如上图所示，整个用户的process其实是一直被block的。只不过process是被select这个函数block，而不是被socket IO给block。&lt;/p>
+&lt;h3 id="异步-ioasynchronous-io">异步 I/O（asynchronous IO）&lt;/h3>
+&lt;p>Linux下的asynchronous IO其实用得很少。先看一下它的流程：&lt;/p>
+&lt;p>&lt;img src="https://tuchuang-1258133230.cos.ap-shanghai.myqcloud.com/g9XGcY5VElpsmWH.png" alt="image.png">&lt;/p>
+&lt;p>用户进程发起read操作之后，立刻就可以开始去做其它的事。而另一方面，从kernel的角度，当它收到一个asynchronous read之后，首先它会立刻返回，所以不会对用户进程产生任何block。&lt;/p>
+&lt;p>然后，kernel会等待数据准备完成，然后将数据拷贝到用户内存，当这一切都完成之后，kernel会给用户进程发送一个signal，告诉它read操作完成了。&lt;/p>
+&lt;h1 id="3总结">3.总结&lt;/h1>
+&lt;h3 id="blocking和non-blocking的区别">blocking和non-blocking的区别&lt;/h3>
+&lt;p>调用blocking IO会一直block住对应的进程直到操作完成，而non-blocking IO在kernel还准备数据的情况下会立刻返回。&lt;/p>
+&lt;h3 id="synchronous-io和asynchronous-io的区别">synchronous IO和asynchronous IO的区别&lt;/h3>
+&lt;p>在说明synchronous IO和asynchronous IO的区别之前，需要先给出两者的定义。POSIX的定义是这样子的：&lt;/p>
+&lt;ul>
+&lt;li>A synchronous I/O operation causes the requesting process to be blocked until that I/O operation completes;&lt;/li>
+&lt;li>An asynchronous I/O operation does not cause the requesting process to be blocked;&lt;/li>
+&lt;/ul>
+&lt;p>两者的区别就在于synchronous IO做 &lt;code>IO operation&lt;/code> 的时候会将process阻塞。按照这个定义，之前所述的blocking IO，non-blocking IO，IO multiplexing都属于synchronous IO。&lt;/p>
+&lt;p>但是non-blocking IO看起来没有被block。这里有个值得注意地方，定义中所指的&lt;code>IO operation&lt;/code>是指真实的IO操作，就是例子中的recvfrom这个system call。non-blocking IO在执行recvfrom这个system call的时候，如果kernel的数据没有准备好，这时候不会block进程。但是，当kernel中数据准备好的时候，recvfrom会将数据从kernel拷贝到用户内存中，这个时候进程是被block了，在这段时间内，进程是被block的。&lt;/p>
+&lt;p>而asynchronous IO则不一样，当进程发起IO 操作之后，就直接返回再也不理睬了，直到kernel发送一个信号，告诉进程说IO完成。在这整个过程中，进程完全没有被block。&lt;/p>
+&lt;p>&lt;strong>各个IO Model的比较如图所示：&lt;/strong>&lt;/p>
+&lt;p>&lt;img src="https://tuchuang-1258133230.cos.ap-shanghai.myqcloud.com/nHa1piRYSCXVFld.png" alt="image.png">&lt;/p>
+&lt;p>可以发现non-blocking IO和asynchronous IO的区别还是很明显的。&lt;/p>
+&lt;ul>
+&lt;li>
+&lt;p>在non-blocking IO中，虽然进程大部分时间都不会被block，但是它仍然要求进程去主动的check，并且当数据准备完成以后，也需要进程主动的再次调用recvfrom来将数据拷贝到用户内存。&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>而asynchronous IO则完全不同。它就像是用户进程将整个IO操作交给了他人（kernel）完成，然后他人做完后发信号通知。在此期间，用户进程不需要去检查IO操作的状态，也不需要主动的去拷贝数据。&lt;/p>
+&lt;/li>
+&lt;/ul></content><category scheme="https://shvinq.com/tech/" term="tech" label="tech"/><category scheme="https://shvinq.com/tags/%E7%9F%A5%E8%AF%86/" term="知识" label="知识"/></entry><entry><title type="text">源码分析-Tinyhttp项目</title><link rel="alternate" type="text/html" href="https://shvinq.com/tech/tinyhttp/"/><id>https://shvinq.com/tech/tinyhttp/</id><updated>2022-03-27T21:52:56+08:00</updated><published>2021-10-01T07:13:58+08:00</published><author><name>shvinq</name><uri>https://shvinq.com/</uri><email>zhoushuiqing321@gmail.com</email></author><rights>在保留本文作者及本文链接的前提下，非商业用途随意转载分享。</rights><summary type="html">Tinyhttpd源码解析 Tinyhttpd是J. David Blackstone写的一个轻量型Http Ser……</summary><content type="html">&lt;h3 id="tinyhttpd源码解析">Tinyhttpd源码解析&lt;/h3>
+&lt;p>Tinyhttpd是J. David Blackstone写的一个轻量型Http Server程序，里面包含了socket编程、多线程编程等知识，值得学习一下。&lt;/p>
+&lt;p>&lt;a href="https://github.com/EZLippi/Tinyhttpd">Tinyhttp源码Github下载&lt;/a>&lt;/p>
+&lt;p>&lt;code>Tinyhttpd&lt;/code>运行流程图如下：&lt;/p>
+&lt;p>&lt;img src="https://tuchuang-1258133230.cos.ap-shanghai.myqcloud.com/EasTYuCfd8n1ki7.png" alt="image.png">&lt;/p>
+&lt;p>&lt;strong>整体工作过程：&lt;/strong>&lt;/p>
+&lt;p>1.启动服务器，可以指定或随机选取端口进行启动，调用startu函数创建服务端socket。&lt;/p>
+&lt;p>2.当收到一个http的连接请求时，分配一个线程调用accept_request函数去处理该请求。&lt;/p>
+&lt;p>3.解析http请求消息来获取请求方法method和请求的url。如果是GET方法则额外保存url中?后面的参数信息&lt;/p>
+&lt;p>4.将格式化的url存入path字符串中来表示此次请求服务器的文件路径，该tinyhttpd程序的&amp;quot;/&amp;quot;目录是在htdpcs下。如果客户端请求消息是以&amp;quot;/&amp;quot;结尾或者请求的是目录，则在path后加上index.html，表示访问主页。&lt;/p>
+&lt;p>5.如果文件路径合法，对于无参数的GET请求则直接调用serve_file函数将文件内容写入客户端socket；其他情况（带参数 GET，POST 方式，url 为可执行文件），则调用 excute_cgi 函数执行 cgi 脚本。&lt;/p>
+&lt;p>6.如果是POST方法，则需要额外获取Content-Length信息&lt;/p>
+&lt;p>7.fork出子进程和创建两个管道cgi_input和cgi_output给父子进程交互信息&lt;/p>
+&lt;p>8.子进程执行cgi脚本，并将子进程的标准输入修改重定向cgi_input的读取端，标准输出重定向到cgi_output的写入端；另外对于GET方法则设置request_method的环境变量，对于POST则设置content-length环境变量。请调用execl函数执行cgi脚本程序来替换该子进程。&lt;/p>
+&lt;p>9.父进程关闭管道cgi_input的读取端和cgi_output的写入端。当请求方式是POST时将从客户端获取的信息通过管道cgi_input[1]向子进程写入，此时是写入到了子进程的标准输入；然后通过cgi_output[0]管道从子进程读取数据发送给客户端，此时是从子进程的标准输出读取的。最后关闭管道，等待子进程结束。&lt;/p>
+&lt;p>源码阅读顺序： main -&amp;gt; startup -&amp;gt; accept_request -&amp;gt; execute_cgi。&lt;/p>
+&lt;h4 id="1http的getpost请求消息格式">1.Http的GET/POST请求消息格式&lt;/h4>
+&lt;p>&lt;img src="https://tuchuang-1258133230.cos.ap-shanghai.myqcloud.com/Q5dCI4EicpNeuoS.png" alt="image.png">&lt;/p>
+&lt;p>标准GET请求&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-http" data-lang="http">&lt;span class="line">&lt;span class="cl">&lt;span class="nf">GET&lt;/span> &lt;span class="nn">/&lt;/span> &lt;span class="kr">HTTP&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="m">1.1&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="n">Host&lt;/span>&lt;span class="o">:&lt;/span> &lt;span class="l">192.168.0.1:47310&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="n">Connection&lt;/span>&lt;span class="o">:&lt;/span> &lt;span class="l">keep-alive&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="err">...&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-http" data-lang="http">&lt;span class="line">&lt;span class="cl">&lt;span class="err">GET / HTTP/1.1\r\nHost: www.sina.com.cn\r\nConnection: close\r\n\r\n
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>标准POST请求​&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-http" data-lang="http">&lt;span class="line">&lt;span class="cl">&lt;span class="err">POST / myhttpd.cgi HTTP / 1.1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="err">Host: 192.168.0.1 : 47310
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="err">Connection : keep - alive
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="err">Content - Length : 10
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="err">...
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="err">Form Data
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;h4 id="2main函数">2.Main函数&lt;/h4>
+&lt;p>以下是&lt;code>main&lt;/code>函数代码实现&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="kt">int&lt;/span> &lt;span class="nf">main&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">void&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">server_sock&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="o">-&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="c1">//创建服务端套接字
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">u_short&lt;/span> &lt;span class="n">port&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="mi">4000&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="c1">//定义端口
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">client_sock&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="o">-&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">struct&lt;/span> &lt;span class="n">sockaddr_in&lt;/span> &lt;span class="n">client_name&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="c1">//客户端地址变量
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">socklen_t&lt;/span> &lt;span class="n">client_name_len&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client_name&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">pthread_t&lt;/span> &lt;span class="n">newthread&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="c1">//线程变量
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">server_sock&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">startup&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">port&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//调用自定义函数startup，初始化服务器段套接字
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">printf&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;httpd running on port %d&lt;/span>&lt;span class="se">\n&lt;/span>&lt;span class="s">&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">port&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/* 一直循环处理新连接的到来，并创建并分配线程去处理该连接 */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">while&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">client_sock&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">accept&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">server_sock&lt;/span>&lt;span class="p">,&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">(&lt;/span>&lt;span class="k">struct&lt;/span> &lt;span class="n">sockaddr&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="p">)&lt;/span>&lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">client_name&lt;/span>&lt;span class="p">,&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">client_name_len&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">client_sock&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="o">-&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="n">error_die&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;accept&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*创建线程，执行线程主函数accept_request(),并将连接套接字传入该函数*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">pthread_create&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">newthread&lt;/span> &lt;span class="p">,&lt;/span> &lt;span class="nb">NULL&lt;/span>&lt;span class="p">,&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">(&lt;/span>&lt;span class="kt">void&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="p">)&lt;/span>&lt;span class="n">accept_request&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="kt">void&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="p">)(&lt;/span>&lt;span class="n">intptr_t&lt;/span>&lt;span class="p">)&lt;/span>&lt;span class="n">client_sock&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">!=&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">perror&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;pthread_create&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">close&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">server_sock&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">return&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="mi">0&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>函数流程如下：&lt;/p>
+&lt;ol>
+&lt;li>调用startup函数初始化一个服务器socket&lt;/li>
+&lt;li>进入循环，通过accep函数来受理客户端连接请求&lt;/li>
+&lt;li>如果接收到新请求在调用pthread_create建立新线程&lt;/li>
+&lt;li>线程中调用accept_request函数，处理请求&lt;/li>
+&lt;/ol>
+&lt;p>下文会分析startup函数，这里分析下accept函数：&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c++" data-lang="c++">&lt;span class="line">&lt;span class="cl">&lt;span class="n">accept&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">server_sock&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="k">struct&lt;/span> &lt;span class="nc">sockaddr&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="p">)&lt;/span>&lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">client_name&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">client_name_len&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>该函数接受一个套接字、ipv4地址结构变量指针以及对应长度，函数返回是新的连接套接字，CS端通过其通信。&lt;/p>
+&lt;p>&lt;code>accept&lt;/code>函数有两个重要特点：&lt;/p>
+&lt;ol>
+&lt;li>如果没有 &lt;code>connect&lt;/code> 请求，函数调用会被阻塞，直到接收到 &lt;code>connect&lt;/code> 请求&lt;/li>
+&lt;li>在与客户端的套接字建立连接时，&lt;code>accept&lt;/code> 函数创建一个新的套接字，并用新的套接字与客户端连接，原始的套接字依然处于打开状态，可以用于继续监听端口。&lt;/li>
+&lt;/ol>
+&lt;h4 id="3套接字初始化函数startup">3.套接字初始化函数startup&lt;/h4>
+&lt;p>原始代码如下：&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="kt">int&lt;/span> &lt;span class="nf">startup&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">u_short&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">port&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">httpd&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">on&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="mi">1&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">struct&lt;/span> &lt;span class="n">sockaddr_in&lt;/span> &lt;span class="n">name&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">httpd&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">socket&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">PF_INET&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">SOCK_STREAM&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">httpd&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="o">-&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="n">error_die&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;socket&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">memset&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">name&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">name&lt;/span>&lt;span class="p">));&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">name&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">sin_family&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">AF_INET&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">name&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">sin_port&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">htons&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="o">*&lt;/span>&lt;span class="n">port&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">name&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">sin_addr&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">s_addr&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">htonl&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">INADDR_ANY&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm"> */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*此处调用setsockopt方法，SO_REUSEADDR参数表示允许重用本地地址和端口*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">((&lt;/span>&lt;span class="n">setsockopt&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">httpd&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">SOL_SOCKET&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">SO_REUSEADDR&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">on&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">on&lt;/span>&lt;span class="p">)))&lt;/span> &lt;span class="o">&amp;lt;&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">error_die&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;setsockopt failed&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">bind&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">httpd&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="k">struct&lt;/span> &lt;span class="n">sockaddr&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="p">)&lt;/span>&lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">name&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">name&lt;/span>&lt;span class="p">))&lt;/span> &lt;span class="o">&amp;lt;&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="n">error_die&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;bind&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="o">*&lt;/span>&lt;span class="n">port&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="cm">/* if dynamically allocating a port */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">socklen_t&lt;/span> &lt;span class="n">namelen&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">name&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*调用 getsockname()获取系统给 httpd 随机分配的端口号*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">getsockname&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">httpd&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="k">struct&lt;/span> &lt;span class="n">sockaddr&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="p">)&lt;/span>&lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">name&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">namelen&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="o">-&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">error_die&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;getsockname&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="o">*&lt;/span>&lt;span class="n">port&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">ntohs&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">name&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">sin_port&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">listen&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">httpd&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="mi">5&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">&amp;lt;&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="n">error_die&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;listen&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">return&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">httpd&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>初始化流程比较简单，大多是固定的代码：&lt;/p>
+&lt;ol>
+&lt;li>调用 &lt;code>socket&lt;/code> 函数，创建一个一套接字&lt;/li>
+&lt;li>创建 &lt;code>sockaddr_in&lt;/code> 结构体，并设置对应的 ip 和 端口&lt;/li>
+&lt;li>通过 &lt;code>bind&lt;/code> 函数，绑定套接字的 ip 和 端口&lt;/li>
+&lt;li>调用 &lt;code>listen&lt;/code> 函数，监听请求&lt;/li>
+&lt;/ol>
+&lt;p>其中具体分析写&lt;code>sockaddr_in&lt;/code>结构体，主要包含了地址和端口信息。&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="k">struct&lt;/span> &lt;span class="n">in_addr&lt;/span> &lt;span class="p">{&lt;/span> &lt;span class="cm">/* IPv4 4-byte address */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">in_addr_t&lt;/span> &lt;span class="n">s_addr&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* Unsigned 32-bit integer */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">};&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="k">struct&lt;/span> &lt;span class="n">sockaddr_in&lt;/span> &lt;span class="p">{&lt;/span> &lt;span class="cm">/* IPv4 socket address */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">sa_family_t&lt;/span> &lt;span class="n">sin_family&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* Address family (AF_INET) */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">in_port_t&lt;/span> &lt;span class="n">sin_port&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* Port number */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">struct&lt;/span> &lt;span class="n">in_addr&lt;/span> &lt;span class="n">sin_addr&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* IPv4 address */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">unsigned&lt;/span> &lt;span class="kt">char&lt;/span> &lt;span class="n">__pad&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">X&lt;/span>&lt;span class="p">];&lt;/span> &lt;span class="cm">/* Pad to size of &amp;#39;sockaddr&amp;#39;
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">}; structure (16 bytes) */&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>接下来startup函数调用&lt;code>setsocket&lt;/code>函数，设置套接字的一些属性，其中SO_REUSEADDR是一个很有用的选项参数。&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="n">setsockopt&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">httpd&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">SOL_SOCKET&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">SO_REUSEADDR&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">on&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">on&lt;/span>&lt;span class="p">))&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>一般服务器的监听socket都应该打开它。其允许服务器bind一个地址，即使这个地址当前已经存在已建立的连接，比如：&lt;/p>
+&lt;ul>
+&lt;li>服务器启动后，有客户端连接并已建立，如果服务器主动关闭，那么和客户端的连接会处于TIME_WAIT状态，此时再次启动服务器，就会bind不成功，报：Address already in use。&lt;/li>
+&lt;li>服务器父进程监听客户端，当和客户端建立链接后，fork一个子进程专门处理客户端的请求，如果父进程停止，因为子进程还和客户端有连接，所以再次启动父进程，也会报Address already in use。&lt;/li>
+&lt;/ul>
+&lt;p>在 TCP 连接中，当端口收到或者发送 FIN/ACK 请求后，端口并不会立即释放，而是处于 &lt;code>TIME_WAIT&lt;/code> 状态（该状态一般持续 2 分钟），此时端口是无法与套接字绑定的。设置 &lt;code>SO_REUSEADDR&lt;/code> 可以让套接字绑定处于 &lt;code>TIME_WAIT&lt;/code> 状态的端口。具体分析可参考《TCP/IP详解》&lt;/p>
+&lt;p>最后调用&lt;code>listen&lt;/code>函数，让套接字进入被动监听状态。&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c++" data-lang="c++">&lt;span class="line">&lt;span class="cl">&lt;span class="n">listen&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">httpd&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="mi">5&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>其中第二个参数5代表请求队列的长度。&lt;/p>
+&lt;blockquote>
+&lt;p>当套接字正在处理客户端请求时，如果有新的请求进来，套接字是没法处理的，只能把它放进缓冲区，待当前请求处理完毕后，再从缓冲区中读取出来处理。如果不断有新的请求进来，它们就按照先后顺序在缓冲区中排队，直到缓冲区满。这个缓冲区，就称为请求队列（Request Queue）。&lt;/p>
+&lt;/blockquote>
+&lt;h4 id="4请求消息解析函数accept_request">4.请求消息解析函数accept_request&lt;/h4>
+&lt;p>函数源代码如下：&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="kt">void&lt;/span> &lt;span class="nf">accept_request&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">void&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">arg&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">client&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">intptr_t&lt;/span>&lt;span class="p">)&lt;/span>&lt;span class="n">arg&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">char&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">1024&lt;/span>&lt;span class="p">];&lt;/span> &lt;span class="c1">//接收客户端消息的缓冲区
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">size_t&lt;/span> &lt;span class="n">numchars&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">char&lt;/span> &lt;span class="n">method&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">255&lt;/span>&lt;span class="p">];&lt;/span> &lt;span class="c1">//获取客户端的请求方式
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="kt">char&lt;/span> &lt;span class="n">url&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">255&lt;/span>&lt;span class="p">];&lt;/span> &lt;span class="c1">//获取客户端请求的URL
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="kt">char&lt;/span> &lt;span class="n">path&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">512&lt;/span>&lt;span class="p">];&lt;/span> &lt;span class="c1">//获取客户端请求的路径
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">size_t&lt;/span> &lt;span class="n">i&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">j&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">struct&lt;/span> &lt;span class="n">stat&lt;/span> &lt;span class="n">st&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="c1">//用来存储文件状态的结构体
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">cgi&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="c1">//CGI程序调用标记
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">char&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">query_string&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="nb">NULL&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*http消息中一行，numchars表示这行信息的结尾在buf中的位置*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">numchars&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">get_line&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">));&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">i&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="n">j&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">while&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="o">!&lt;/span>&lt;span class="n">ISspace&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">i&lt;/span>&lt;span class="p">])&lt;/span> &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">i&lt;/span> &lt;span class="o">&amp;lt;&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">method&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">-&lt;/span> &lt;span class="mi">1&lt;/span>&lt;span class="p">))&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">method&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">i&lt;/span>&lt;span class="p">]&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">i&lt;/span>&lt;span class="p">];&lt;/span> &lt;span class="c1">//用method来表示请求方式
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">i&lt;/span>&lt;span class="o">++&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">j&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="n">i&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">method&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">i&lt;/span>&lt;span class="p">]&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="sc">&amp;#39;\0&amp;#39;&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*此处判断方法是否支持解析或者方法是否正常，不支持则调用unimplemented函数返回错误方法的响应消息给客户端并退出解析结束线程*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">strcasecmp&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">method&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;GET&amp;#34;&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> &lt;span class="n">strcasecmp&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">method&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;POST&amp;#34;&lt;/span>&lt;span class="p">))&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">unimplemented&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">return&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*如果是post方法，则将调用cgi函数的标记置为true*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">strcasecmp&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">method&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;POST&amp;#34;&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="n">cgi&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="mi">1&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">i&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">while&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">ISspace&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">j&lt;/span>&lt;span class="p">])&lt;/span> &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">j&lt;/span> &lt;span class="o">&amp;lt;&lt;/span> &lt;span class="n">numchars&lt;/span>&lt;span class="p">))&lt;/span> &lt;span class="n">j&lt;/span>&lt;span class="o">++&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*继续往后移动j来获取url信息作为字符串*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">while&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="o">!&lt;/span>&lt;span class="n">ISspace&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">j&lt;/span>&lt;span class="p">])&lt;/span> &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">i&lt;/span> &lt;span class="o">&amp;lt;&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">url&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">-&lt;/span> &lt;span class="mi">1&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">j&lt;/span> &lt;span class="o">&amp;lt;&lt;/span> &lt;span class="n">numchars&lt;/span>&lt;span class="p">))&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">url&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">i&lt;/span>&lt;span class="p">]&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">j&lt;/span>&lt;span class="p">];&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">i&lt;/span>&lt;span class="o">++&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="n">j&lt;/span>&lt;span class="o">++&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">url&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">i&lt;/span>&lt;span class="p">]&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="sc">&amp;#39;\0&amp;#39;&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*比较method字符串和&amp;#34;GET&amp;#34;是否相同，相同返回0，大于返回正值，反正返回负值。此处是处理GET方法*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">strcasecmp&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">method&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;GET&amp;#34;&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*用query_string来获取?后面的GET请求的参数*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">query_string&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">url&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">while&lt;/span> &lt;span class="p">((&lt;/span>&lt;span class="o">*&lt;/span>&lt;span class="n">query_string&lt;/span> &lt;span class="o">!=&lt;/span> &lt;span class="sc">&amp;#39;?&amp;#39;&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="o">*&lt;/span>&lt;span class="n">query_string&lt;/span> &lt;span class="o">!=&lt;/span> &lt;span class="sc">&amp;#39;\0&amp;#39;&lt;/span>&lt;span class="p">))&lt;/span> &lt;span class="n">query_string&lt;/span>&lt;span class="o">++&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*如果有参数则将cgi标记置为true，此时query_string指向了?后面的GET参数*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="o">*&lt;/span>&lt;span class="n">query_string&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="sc">&amp;#39;?&amp;#39;&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">cgi&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="mi">1&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="o">*&lt;/span>&lt;span class="n">query_string&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="sc">&amp;#39;\0&amp;#39;&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">query_string&lt;/span>&lt;span class="o">++&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*将字符串&amp;#34;htdoc&amp;#34;与字符串url进行拼接，并保存在path变量中*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">sprintf&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">path&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;htdocs%s&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">url&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*如果此时path是以&amp;#34;/&amp;#34;结尾，则将字符串&amp;#34;index.html&amp;#34;追加到path后面*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">path&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="n">strlen&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">path&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">-&lt;/span> &lt;span class="mi">1&lt;/span>&lt;span class="p">]&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="sc">&amp;#39;/&amp;#39;&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="n">strcat&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">path&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;index.html&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/* 调用stat函数，通过path中的文件路径获取文件或文件路径信息，并保存到struct stat st中 */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">stat&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">path&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">st&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="o">-&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*stat()函数执行失败返回-1，处理并丢弃剩下的请求头并返回错误信息*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">while&lt;/span> &lt;span class="p">((&lt;/span>&lt;span class="n">numchars&lt;/span> &lt;span class="o">&amp;gt;&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> &lt;span class="n">strcmp&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;&lt;/span>&lt;span class="se">\n&lt;/span>&lt;span class="s">&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">))&lt;/span> &lt;span class="cm">/* read &amp;amp; discard headers */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">numchars&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">get_line&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">));&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">not_found&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">else&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*如果文件路径合法，对于无参数的 GET 请求，直接将文件内容写入客户端套接字。其他情况（带参数GET，POST 方式，url 为可执行文件），则调用 excute_cgi 函数执行 cgi 脚本*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">((&lt;/span>&lt;span class="n">st&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">st_mode&lt;/span> &lt;span class="o">&amp;amp;&lt;/span> &lt;span class="n">S_IFMT&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="n">S_IFDIR&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="n">strcat&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">path&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;/index.html&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">((&lt;/span>&lt;span class="n">st&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">st_mode&lt;/span> &lt;span class="o">&amp;amp;&lt;/span> &lt;span class="n">S_IXUSR&lt;/span>&lt;span class="p">)&lt;/span>&lt;span class="o">||&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">st&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">st_mode&lt;/span> &lt;span class="o">&amp;amp;&lt;/span> &lt;span class="n">S_IXGRP&lt;/span>&lt;span class="p">)&lt;/span>&lt;span class="o">||&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">st&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">st_mode&lt;/span> &lt;span class="o">&amp;amp;&lt;/span> &lt;span class="n">S_IXOTH&lt;/span>&lt;span class="p">))&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">cgi&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*简单的GET请求且？后无参数时，不执行cgi函数，而是调用serve_file函数将客户端请求的文件发送给客户端*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="o">!&lt;/span>&lt;span class="n">cgi&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="n">serve_file&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">path&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*执行cgi函数，将连接套接字，文件路径，请求方式和?后的GET参数传入。*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">else&lt;/span> &lt;span class="n">execute_cgi&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">path&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">method&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">query_string&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">close&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>&lt;code>accept_request&lt;/code> 函数主要涉及的是对于 request header 的处理，整体流程如下：&lt;/p>
+&lt;ol>
+&lt;li>提取 request 的类型（GET 或 POST）&lt;/li>
+&lt;li>提取 url 信息&lt;/li>
+&lt;li>如果是 GET 请求，则提取 url 中的参数信息（?之后参数）&lt;/li>
+&lt;li>如果 url 结尾是 / 或者该地址对应一个目录，默认调用该目录下的 index.html&lt;/li>
+&lt;li>如果不是 CGI，则调用 &lt;code>serve_file&lt;/code>，将文本内容返回给客户端&lt;/li>
+&lt;li>如果是 CGI，调用 &lt;code>execute_cgi&lt;/code>，执行 CGI 脚本程序&lt;/li>
+&lt;li>断开连接&lt;/li>
+&lt;/ol>
+&lt;p>在对 request header 的处理中，大量调用了 &lt;code>get_line&lt;/code> 函数。该函数用于读取文件的下一行信息，适用于不同的换行符（&lt;code>\n&lt;/code> 或 &lt;code>\r\n&lt;/code>）。&lt;/p>
+&lt;p>该函数使用的&lt;code>stat&lt;/code>函数，用于获取文件或文件路径状态信息。&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="kt">int&lt;/span> &lt;span class="nf">stat&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="k">const&lt;/span> &lt;span class="kt">char&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">pathname&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">struct&lt;/span> &lt;span class="n">stat&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">statbuf&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>其中&lt;code>stat&lt;/code>结构体内容信息较多，具体源码如下：&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="k">struct&lt;/span> &lt;span class="n">stat&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">dev_t&lt;/span> &lt;span class="n">st_dev&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* ID of device containing file -文件所在设备的ID*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">ino_t&lt;/span> &lt;span class="n">st_ino&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* inode number -inode节点号*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">mode_t&lt;/span> &lt;span class="n">st_mode&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* protection -保护模式?*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">nlink_t&lt;/span> &lt;span class="n">st_nlink&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* number of hard links -链向此文件的连接数(硬连接)*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">uid_t&lt;/span> &lt;span class="n">st_uid&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* user ID of owner -user id*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">gid_t&lt;/span> &lt;span class="n">st_gid&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* group ID of owner - group id*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">dev_t&lt;/span> &lt;span class="n">st_rdev&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* device ID (if special file) -设备号，针对设备文件*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">off_t&lt;/span> &lt;span class="n">st_size&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* total size, in bytes -文件大小，字节为单位*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">blksize_t&lt;/span> &lt;span class="n">st_blksize&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* blocksize for filesystem I/O -系统块的大小*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">blkcnt_t&lt;/span> &lt;span class="n">st_blocks&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* number of blocks allocated -文件所占块数*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">time_t&lt;/span> &lt;span class="n">st_atime&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* time of last access -最近存取时间*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">time_t&lt;/span> &lt;span class="n">st_mtime&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* time of last modification -最近修改时间*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">time_t&lt;/span> &lt;span class="n">st_ctime&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="cm">/* time of last status change - */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">};&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;h4 id="5cgi执行函数execute_cgi">5.CGI执行函数execute_cgi&lt;/h4>
+&lt;p>函数源代码如下：&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="cm">/*参数为连接套接字，文件路径，请求方式和?后的GET参数*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="kt">void&lt;/span> &lt;span class="nf">execute_cgi&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">client&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">const&lt;/span> &lt;span class="kt">char&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">path&lt;/span>&lt;span class="p">,&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">const&lt;/span> &lt;span class="kt">char&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">method&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">const&lt;/span> &lt;span class="kt">char&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">query_string&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">char&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">1024&lt;/span>&lt;span class="p">];&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">cgi_output&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">2&lt;/span>&lt;span class="p">];&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">cgi_input&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">2&lt;/span>&lt;span class="p">];&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">pid_t&lt;/span> &lt;span class="n">pid&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">status&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">i&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">char&lt;/span> &lt;span class="n">c&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">numchars&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="mi">1&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">content_length&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="o">-&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">buf&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">0&lt;/span>&lt;span class="p">]&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="sc">&amp;#39;A&amp;#39;&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">]&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="sc">&amp;#39;\0&amp;#39;&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*如果是GET请求，无须处理下面的信息，所以继续执行处理并丢弃剩下的请求头信息*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">strcasecmp&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">method&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;GET&amp;#34;&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span> &lt;span class="k">while&lt;/span> &lt;span class="p">((&lt;/span>&lt;span class="n">numchars&lt;/span> &lt;span class="o">&amp;gt;&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> &lt;span class="n">strcmp&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;&lt;/span>&lt;span class="se">\n&lt;/span>&lt;span class="s">&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">))&lt;/span> &lt;span class="cm">/* read &amp;amp; discard headers */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">numchars&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">get_line&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">));&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">else&lt;/span> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">strcasecmp&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">method&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;POST&amp;#34;&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="cm">/*POST方法*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">numchars&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">get_line&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">));&lt;/span> &lt;span class="c1">//获取下一行信息
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="k">while&lt;/span> &lt;span class="p">((&lt;/span>&lt;span class="n">numchars&lt;/span> &lt;span class="o">&amp;gt;&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> &lt;span class="n">strcmp&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;&lt;/span>&lt;span class="se">\n&lt;/span>&lt;span class="s">&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">))&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*如果是POST请求，就需要得到 Content-Length,content-Length 字符串长度为15从 17 位开 始是具体的长度信息*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">buf&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">15&lt;/span>&lt;span class="p">]&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="sc">&amp;#39;\0&amp;#39;&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">strcasecmp&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;Content-Length:&amp;#34;&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">content_length&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">atoi&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="o">&amp;amp;&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">16&lt;/span>&lt;span class="p">]));&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">numchars&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">get_line&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">));&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">content_length&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="o">-&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">bad_request&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">return&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">else&lt;/span>&lt;span class="cm">/*HEAD or other*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*pipe系统调用建立管道*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">pipe&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">cgi_output&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">&amp;lt;&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">cannot_execute&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//调用cannot_execute函数通知客户端无法执行CGI脚本
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="k">return&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">pipe&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">cgi_input&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">&amp;lt;&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">cannot_execute&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">return&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">pid&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">fork&lt;/span>&lt;span class="p">())&lt;/span> &lt;span class="o">&amp;lt;&lt;/span> &lt;span class="mi">0&lt;/span> &lt;span class="p">)&lt;/span> &lt;span class="p">{&lt;/span> &lt;span class="c1">//创建子进程执行CGI脚本
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">cannot_execute&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">return&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">sprintf&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;HTTP/1.0 200 OK&lt;/span>&lt;span class="se">\r\n&lt;/span>&lt;span class="s">&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//发送200OK状态码给客户端
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">send&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">strlen&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">buf&lt;/span>&lt;span class="p">),&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">pid&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="cm">/* child: CGI script */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">char&lt;/span> &lt;span class="n">meth_env&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">255&lt;/span>&lt;span class="p">];&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">char&lt;/span> &lt;span class="n">query_env&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">255&lt;/span>&lt;span class="p">];&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">char&lt;/span> &lt;span class="n">length_env&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">255&lt;/span>&lt;span class="p">];&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*复制cgi_output[1]文件描述符到标准输出，此时标准输出被关闭*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">dup2&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">cgi_output&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">],&lt;/span> &lt;span class="n">STDOUT&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*复制cgi_input[0]文件描述符到标准输入，此时标准输入被关闭*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">dup2&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">cgi_input&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">0&lt;/span>&lt;span class="p">],&lt;/span> &lt;span class="n">STDIN&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">close&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">cgi_output&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">0&lt;/span>&lt;span class="p">]);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">close&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">cgi_input&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">]);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*将拼接字符串，保存到meth_env中*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">sprintf&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">meth_env&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;REQUEST_METHOD=%s&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">method&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*调用putenv函数将meth_env添加到环境变量中*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">putenv&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">meth_env&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*如果是GET请求，将？后面的参数也加入环境变量*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">strcasecmp&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">method&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;GET&amp;#34;&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">sprintf&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">query_env&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;QUERY_STRING=%s&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">query_string&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">putenv&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">query_env&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*如果是POST方法，将content-length加入环境变量*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">else&lt;/span> &lt;span class="p">{&lt;/span> &lt;span class="cm">/* POST */&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">sprintf&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">length_env&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;CONTENT_LENGTH=%d&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">content_length&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">putenv&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">length_env&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*exec函数族启动一个新程序，替换原有的进程。因此这个新的被exec执行的进程的PID不会改变，和调用exec函数的进程一样*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">execl&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">path&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="nb">NULL&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">exit&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="mi">0&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*子进程的标准输入输出和cgi_input和cgi_output绑定了，父进程可以通过 cgi_input 和 cgi_output 获取子进程中cgi脚本的标准输入和标准输出*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">else&lt;/span> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">close&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">cgi_output&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">]);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">close&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">cgi_input&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">0&lt;/span>&lt;span class="p">]);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">strcasecmp&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">method&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s">&amp;#34;POST&amp;#34;&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*根据Content-Length读取客户端信息，并通过cgi_inputp[1]管道传入子进程的标准输入*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">for&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">i&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="n">i&lt;/span> &lt;span class="o">&amp;lt;&lt;/span> &lt;span class="n">content_length&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="n">i&lt;/span>&lt;span class="o">++&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">recv&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">c&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="mi">1&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">write&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">cgi_input&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">],&lt;/span> &lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">c&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="mi">1&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="cm">/*通过cgi_output管道获取子进程标准输出，并写入到客户端*/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">while&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">read&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">cgi_output&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">0&lt;/span>&lt;span class="p">],&lt;/span> &lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">c&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="mi">1&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">&amp;gt;&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="n">send&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">client&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">c&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="mi">1&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">close&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">cgi_output&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">0&lt;/span>&lt;span class="p">]);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">close&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">cgi_input&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">]);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">waitpid&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">pid&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">status&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>函数的整体流程如下：&lt;/p>
+&lt;ol>
+&lt;li>对 POST 请求，根据 Content-Length 提取 body 中的信息&lt;/li>
+&lt;li>创建两个管道 cgi_input 和 cgi_output 用于进程间通信&lt;/li>
+&lt;li>调用 &lt;code>fork&lt;/code> 建立子进程&lt;/li>
+&lt;li>子进程调用 &lt;code>dup2&lt;/code> 将标准输入与标准输出分别重定向到对应管道的读端和写端&lt;/li>
+&lt;li>在子进程中设置环境变量，并调用 &lt;code>execl&lt;/code>，执行 CGI 脚本&lt;/li>
+&lt;li>父进程通过管道向 CGI 脚本传入参数，并获取脚本的返回结果，再将结果传给客户端&lt;/li>
+&lt;li>父进程等待子结束&lt;/li>
+&lt;/ol>
+&lt;p>这里的重点是父子进程利用管道实现IPC。&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="kt">int&lt;/span> &lt;span class="nf">pipe&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">filedes&lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="mi">2&lt;/span>&lt;span class="p">]);&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>调用 &lt;code>pipe&lt;/code> 函数，得到两个文件描述符，分别对应管道的读端 &lt;code>filedes[0]&lt;/code> 和写端 &lt;code>filedes[1]&lt;/code>，当程序在写端写入数据时，在读端可以读取到写入的数据。接着，通过 &lt;code>fork&lt;/code> 函数，得到一个子进程。由于子进程与父进程拥有完全相同的变量，因此子进程也有对应管道读端和写端的两个文件描述符。之后，只需要关闭一侧的读端和另一侧的写端，就可以实现进程间的通信。&lt;/p>
+&lt;p>&lt;img src="https://tuchuang-1258133230.cos.ap-shanghai.myqcloud.com/9G2ZODXWJiEAM4F.png" alt="image.png">&lt;/p>
+&lt;p>接下来调用&lt;code>dup2&lt;/code>系统调用，对子进程的标准输入输出进行重定向。&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="kt">int&lt;/span> &lt;span class="nf">dup2&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">oldfd&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">newfd&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//dup2可以用参数newfd指定新文件描述符的数值。
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>若参数newfd已经被程序使用，则系统就会将newfd所指的文件关闭，若newfd等于oldfd，则返回newfd,而不关闭newfd所指的文件。dup2所复制的文件描述符与原来的文件描述符共享各种文件状态、共享所有的锁定、读写位置和各项权限或flags等&lt;/p>
+&lt;p>在这里实现了以下功能：&lt;/p>
+&lt;ul>
+&lt;li>子进程的标准输出将会写入到 &lt;code>cgi_output&lt;/code> 的写端&lt;/li>
+&lt;li>&lt;code>cgi_input&lt;/code> 读端读取的数据将会作为子进程的标准输入&lt;/li>
+&lt;/ul>
+&lt;p>在子进程完成标准输入和标准输出的重定向之后，调用 &lt;code>execl&lt;/code> 函数，执行 CGI 脚本。&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="n">execl&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">path&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="nb">NULL&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>该函数会让进程加载新的程序，之前的程序包括缓存的数据都会被丢弃掉。此时，子进程就是 CGI 脚本的执行程序。&lt;/p>
+&lt;p>父进程只需要做两件事：&lt;/p>
+&lt;ul>
+&lt;li>调用 &lt;code>recv&lt;/code> 函数，从客户端中接收数据，并将数据通过 &lt;code>cgi_input[1]&lt;/code> 写入传入 CGI 脚本&lt;/li>
+&lt;li>从 &lt;code>cgi_output[0]&lt;/code> 中读取 CGI 脚本的返回结果，并调用 &lt;code>send&lt;/code> 函数，将结果发送给客户端&lt;/li>
+&lt;/ul>
+&lt;p>该Tinyhttpd的源码主体已经解析完毕，当然还有获取一行信息的get_line()、从文件读入内容的cat()等函数，逻辑比较简单，读一遍大致就理解了，这里就不加以赘述。&lt;/p></content><category scheme="https://shvinq.com/tech/" term="tech" label="tech"/><category scheme="https://shvinq.com/tags/%E6%BA%90%E7%A0%81/" term="源码" label="源码"/></entry><entry><title type="text">构造概率函数</title><link rel="alternate" type="text/html" href="https://shvinq.com/tech/algorithm1/"/><id>https://shvinq.com/tech/algorithm1/</id><updated>2022-03-27T21:52:56+08:00</updated><published>2021-09-05T07:00:42+08:00</published><author><name>shvinq</name><uri>https://shvinq.com/</uri><email>zhoushuiqing321@gmail.com</email></author><rights>在保留本文作者及本文链接的前提下，非商业用途随意转载分享。</rights><summary type="html">问题描述 1.给出一个随机函数randX()，可以均匀随机获得一个1~X的数。 2.根据这个随机数函数构……</summary><content type="html">&lt;h4 id="问题描述">问题描述&lt;/h4>
+&lt;p>1.给出一个随机函数randX()，可以均匀随机获得一个1~X的数。&lt;/p>
+&lt;p>2.根据这个随机数函数构造一个rangY()函数，可以均匀随机获得1~Y的一个数。&lt;/p>
+&lt;p>例如leetcode470用rand7()构造rand10()。&lt;/p>
+&lt;h4 id="问题解法">问题解法&lt;/h4>
+&lt;p>&lt;strong>思路&lt;/strong>：将rand7() 拆解成rand01()。rand01()是一个等概率返回0和1的随机函数。&lt;/p>
+&lt;p>可以根据这个01函数构造出任意randY()函数。&lt;/p>
+&lt;p>1.已知可以等概率获得1~7，在rand01()循环执行rand7()，如果等于4就一直循环，小于4返回0，大于4返回1，这样就得到了等概率的0和1。&lt;/p>
+&lt;p>2.构造1~10的等概率函数，可以先构造0~9，然后加1即可&lt;/p>
+&lt;p>3.因为要构造0~9，需要4个二进制才能表示完全&lt;/p>
+&lt;p>代码如下：&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c++" data-lang="c++">&lt;span class="line">&lt;span class="cl">&lt;span class="kt">int&lt;/span> &lt;span class="nf">rand01&lt;/span>&lt;span class="p">()&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">ret&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">do&lt;/span> &lt;span class="n">ret&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">rand7&lt;/span>&lt;span class="p">();&lt;/span> &lt;span class="k">while&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">ret&lt;/span> &lt;span class="o">==&lt;/span> &lt;span class="mi">4&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">return&lt;/span> &lt;span class="n">ret&lt;/span> &lt;span class="o">&amp;gt;&lt;/span> &lt;span class="mi">4&lt;/span>&lt;span class="o">?&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="o">:&lt;/span>&lt;span class="mi">0&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="kt">int&lt;/span> &lt;span class="nf">rand10&lt;/span>&lt;span class="p">()&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">int&lt;/span> &lt;span class="n">ret&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">do&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">ret&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">rand01&lt;/span>&lt;span class="p">()&lt;/span> &lt;span class="o">&amp;lt;&amp;lt;&lt;/span> &lt;span class="mi">3&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">+&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">rand01&lt;/span>&lt;span class="p">()&lt;/span> &lt;span class="o">&amp;lt;&amp;lt;&lt;/span> &lt;span class="mi">2&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">+&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">rand01&lt;/span>&lt;span class="p">()&lt;/span> &lt;span class="o">&amp;lt;&amp;lt;&lt;/span> &lt;span class="mi">1&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">+&lt;/span> &lt;span class="n">rand01&lt;/span>&lt;span class="p">();&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">while&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">ret&lt;/span> &lt;span class="o">&amp;gt;&lt;/span> &lt;span class="mi">9&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">return&lt;/span> &lt;span class="n">ret&lt;/span> &lt;span class="o">+&lt;/span> &lt;span class="mi">1&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div></content><category scheme="https://shvinq.com/tech/" term="tech" label="tech"/><category scheme="https://shvinq.com/tags/%E7%AE%97%E6%B3%95/" term="算法" label="算法"/></entry><entry><title type="text">01-Linux文件操作</title><link rel="alternate" type="text/html" href="https://shvinq.com/tech/network-program01/"/><id>https://shvinq.com/tech/network-program01/</id><updated>2022-03-27T21:52:56+08:00</updated><published>2021-08-20T02:20:04+08:00</published><author><name>shvinq</name><uri>https://shvinq.com/</uri><email>zhoushuiqing321@gmail.com</email></author><rights>在保留本文作者及本文链接的前提下，非商业用途随意转载分享。</rights><summary type="html">1.打开文件： #include &amp;lt;sys/types.h&amp;gt;#include &amp;lt;sys/stat.h&amp;gt;#include &amp;lt;fcntl.h&amp;gt;int open(const char *path, int flag); //成功返回文件描述符，失败返回-1。 //path：文件名的字符串地……</summary><content type="html">&lt;h3 id="1打开文件">1.打开文件：&lt;/h3>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c++" data-lang="c++">&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#include&lt;/span> &lt;span class="cpf">&amp;lt;sys/types.h&amp;gt;&lt;/span>&lt;span class="cp">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#include&lt;/span> &lt;span class="cpf">&amp;lt;sys/stat.h&amp;gt;&lt;/span>&lt;span class="cp">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#include&lt;/span> &lt;span class="cpf">&amp;lt;fcntl.h&amp;gt;&lt;/span>&lt;span class="cp">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="nf">open&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="k">const&lt;/span> &lt;span class="kt">char&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">path&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">flag&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//成功返回文件描述符，失败返回-1。
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="c1">//path：文件名的字符串地址；flag：文件打开模式信息
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;table>
+&lt;thead>
+&lt;tr>
+&lt;th>打开模式&lt;/th>
+&lt;th>含义&lt;/th>
+&lt;/tr>
+&lt;/thead>
+&lt;tbody>
+&lt;tr>
+&lt;td>O_CREAT&lt;/td>
+&lt;td>必要时创建文件&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>O_TRUNC&lt;/td>
+&lt;td>删除全部现有数据&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>O_APPEND&lt;/td>
+&lt;td>维持现有数据，保存到其后面&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>O_RDONLY&lt;/td>
+&lt;td>只读打开&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>O_WRONLY&lt;/td>
+&lt;td>只写打开&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>O_RDWR&lt;/td>
+&lt;td>读写打开&lt;/td>
+&lt;/tr>
+&lt;/tbody>
+&lt;/table>
+&lt;h3 id="2关闭文件">2.关闭文件&lt;/h3>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#include&lt;/span> &lt;span class="cpf">&amp;lt;unistd.h&amp;gt;&lt;/span>&lt;span class="cp">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="nf">close&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//成功返回0，失败返回-1。fd：需要关闭的文件或套接字的文件描述符
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;h3 id="3将数据写入文件">3.将数据写入文件&lt;/h3>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#include&lt;/span> &lt;span class="cpf">&amp;lt;unistd.h&amp;gt;&lt;/span>&lt;span class="cp">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">&lt;/span>&lt;span class="n">ssize_t&lt;/span> &lt;span class="nf">write&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">const&lt;/span> &lt;span class="kt">void&lt;/span> &lt;span class="o">*&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">size_t&lt;/span> &lt;span class="n">nbytes&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//成功返回写入的字节数，失败返回-1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="cm">/*
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">fd: 显示保存数据传输对象的文件描述符。
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">buf: 保存要传输数据的缓冲地址值。
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">nbytes: 要传输的字节数。
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">该函数定义中，size_t通过typedef声明的unsigned int类型。对于ssize_t,size_t前面多加的s代表signed，即ssize_t时通过typedef声明的signed int类型。
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">*/&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;h3 id="4读取文件中的数据">4.读取文件中的数据&lt;/h3>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c++" data-lang="c++">&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#include&lt;/span> &lt;span class="cpf">&amp;lt;unistd.h&amp;gt;&lt;/span>&lt;span class="cp">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">&lt;/span>&lt;span class="n">ssize_t&lt;/span> &lt;span class="nf">read&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="n">fd&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">void&lt;/span> &lt;span class="o">*&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">size_t&lt;/span> &lt;span class="n">nbytes&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//成功返回接受的字节数(但是遇到文件结尾则会返回0)，失败返回-1。
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="cm">/*
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">fd: 显示数据接收对象的文件描述符fd
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">buf: 要保存接收数据的缓存地址值
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">nbytes: 要接收数据的最大字节数
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">*/&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div></content><category scheme="https://shvinq.com/tech/" term="tech" label="tech"/><category scheme="https://shvinq.com/tags/%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B/" term="网络编程" label="网络编程"/></entry><entry><title type="text">02-基于Windows的IO函数</title><link rel="alternate" type="text/html" href="https://shvinq.com/tech/network-program02/"/><id>https://shvinq.com/tech/network-program02/</id><updated>2022-03-27T21:52:56+08:00</updated><published>2021-08-20T02:20:04+08:00</published><author><name>shvinq</name><uri>https://shvinq.com/</uri><email>zhoushuiqing321@gmail.com</email></author><rights>在保留本文作者及本文链接的前提下，非商业用途随意转载分享。</rights><summary type="html">Linux中套接字也是文件，因而可以通过文件I/O函数read和write进行数据传输。而Windo……</summary><content type="html">&lt;p>Linux中套接字也是文件，因而可以通过文件I/O函数read和write进行数据传输。而Windows严格区分文件I/O函数和套接字I/O函数。&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#include&lt;/span> &lt;span class="cpf">&amp;lt;winsock2.h&amp;gt;&lt;/span>&lt;span class="cp">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="nf">send&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">SOCKET&lt;/span> &lt;span class="n">s&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">const&lt;/span> &lt;span class="kt">char&lt;/span> &lt;span class="o">*&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">len&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">flags&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//成功返回传输字节数，失败返回SOCKET_ERROR。
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="cm">/*
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">s: 表示数据传输对象连接的套接字句柄值
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">buf: 保存带传输数据的缓存地址值
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">len: 要传输的字节数
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">flags: 传输数据时用到的多种共选项信息，目前只需传递0，表示不设置任何选项
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">*/&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#include&lt;/span> &lt;span class="cpf">&amp;lt;winsock2.h&amp;gt;&lt;/span>&lt;span class="cp">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="nf">recv&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">SOCKET&lt;/span> &lt;span class="n">s&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="k">const&lt;/span> &lt;span class="kt">char&lt;/span> &lt;span class="o">*&lt;/span> &lt;span class="n">buf&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">len&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="kt">int&lt;/span> &lt;span class="n">flags&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">//成功时返回接收的字节数(收到EOF时为0)，失败返回SOCKET_ERROR
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="cm">/*
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">s: 表示数据传输对象连接的套接字句柄值
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">buf: 保存带传输数据的缓存地址值
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">len: 要传输的字节数
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">flags: 传输数据时用到的多种共选项信息，目前只需传递0，表示不设置任何选项
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">*/&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div></content><category scheme="https://shvinq.com/tech/" term="tech" label="tech"/><category scheme="https://shvinq.com/tags/%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B/" term="网络编程" label="网络编程"/></entry><entry><title type="text">03-Windows平台socket</title><link rel="alternate" type="text/html" href="https://shvinq.com/tech/network-program03/"/><id>https://shvinq.com/tech/network-program03/</id><updated>2022-03-27T21:52:56+08:00</updated><published>2021-08-20T02:20:04+08:00</published><author><name>shvinq</name><uri>https://shvinq.com/</uri><email>zhoushuiqing321@gmail.com</email></author><rights>在保留本文作者及本文链接的前提下，非商业用途随意转载分享。</rights><summary type="html">1.Winsock的初始化 进行Winsock编程，首先调用WSAStartup函数，设置程序中用到的……</summary><content type="html">&lt;h3 id="1winsock的初始化">1.Winsock的初始化&lt;/h3>
+&lt;p>进行Winsock编程，首先调用WSAStartup函数，设置程序中用到的Winsock版本,并初始化相应的版本。&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#include&lt;/span> &lt;span class="cpf">&amp;lt;winsock2.h&amp;gt;&lt;/span>&lt;span class="cp">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="nf">WSAStartup&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">WORD&lt;/span> &lt;span class="n">wVersionRequested&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">LPWSADATA&lt;/span> &lt;span class="n">lpWSAData&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//成功返回0，失败返回非0的错误代码值
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="cm">/*
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">wVersionRequested: 程序员所需要的Winsock版本信息
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">lpWSAData: WSADATA结构体变量
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cm">*/&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>参数说明&lt;/p>
+&lt;p>​ 第一个参数：Windsock中存在多个版本。应准备WORD(WORD是通过typedef声明定义的unsigned short类型)套接字版本信息，并传 递给该函数的 第一个参数wVersionRequested。若版本为1.2，则1是主版本号，2是副版本号，应传递0x0201。&lt;/p>
+&lt;p>​ 高8位是副版本号，低8位是主版本号，以字节位单位收到构造版本信息有些麻烦，借助MAKEWORD宏函数则可快速构建WORD型版 本信息。&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="n">MAKEWORD&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="mi">2&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//1是主版本号，2是副版本号，返回0x0201
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>​ 第二个参数：lpWSAData需要传入WSADATA型结构体变量地址(LPWSADATA是WSADATA的指针类型)。调用完函数后，相应参数中将 填充已初始化的库信息。虽无特殊含义，但为了调用函数，必须传递WSADATA结构体变量地址。以下代码成为Winsock编程的公式。&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="kt">int&lt;/span> &lt;span class="nf">main&lt;/span>&lt;span class="p">()&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">WSADATA&lt;/span> &lt;span class="n">wsaData&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">...&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">WSAStartup&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="mi">2&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="mi">2&lt;/span>&lt;span class="p">),&lt;/span> &lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">wsaData&lt;/span> &lt;span class="o">!=&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">ErrorHandling&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s">&amp;#34;WSAStarup() error!&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">...&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">return&lt;/span> &lt;span class="mi">0&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;h3 id="2注销winsock相关库">2.注销Winsock相关库&lt;/h3>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#include&lt;/span> &lt;span class="cpf">&amp;lt;winsock2.h&amp;gt;&lt;/span>&lt;span class="cp">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">&lt;/span>&lt;span class="kt">int&lt;/span> &lt;span class="nf">WSACleanup&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="kt">void&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">//成功返回0，失败返回SOCKET_ERROR
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;h3 id="3基于windows的套接字相关函数">3.基于Windows的套接字相关函数&lt;/h3>
+&lt;p>...&lt;/p>
+&lt;h3 id="4windows中的文件句柄和套接字句柄">4.Windows中的文件句柄和套接字句柄&lt;/h3>
+&lt;p>​ Linux内部也将套接字当作文件，因此不管创建文件还是套接字都返回文件描述符。Windows中通过调用系统函数创建文件时，返回“句柄”(handle)，也就是相当于Linux的文件描述符。只不过Windows中要区分文件句柄和套接字句柄。虽然都是句柄，但不像Linux那样完全一致。文件句柄相关函数跟套接字相关函数是有区别的。&lt;/p></content><category scheme="https://shvinq.com/tech/" term="tech" label="tech"/><category scheme="https://shvinq.com/tags/%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B/" term="网络编程" label="网络编程"/></entry></feed>
